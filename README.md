@@ -92,7 +92,7 @@ brew install --cask hellocket/tap/claudecount
 ### Menu bar
 
 - The left number is the **5-hour limit**, the right number is the **weekly limit**.
-- It refreshes every 5 minutes and when your Mac wakes from sleep.
+- It refreshes every 5 minutes by default (choose 1, 2, 5 or 10 minutes under **Refresh Interval**) and when your Mac wakes from sleep.
 
 ### Menu (click the numbers)
 
@@ -105,6 +105,7 @@ brew install --cask hellocket/tap/claudecount
 | Extra | Shown only when extra usage is turned on. With a limit: `Extra $3.10 / $20.00` and a bar. Balance only: `Extra $4.20 left` |
 | Buy Extra Usage… | Opens the usage settings in the Claude desktop app, or claude.ai in your browser if the app isn't installed |
 | Last updated | When the numbers were last fetched. Errors such as HTTP 429 appear here too |
+| Refresh Interval › | Check every 1, 2, 5 or 10 minutes. If the server rate-limits (HTTP 429), ClaudeCount backs off on its own: 2 → 4 → 8 → 16 → up to 30 minutes |
 | Refresh Now | Refreshes right away. Your shortcut is shown on the right |
 | Change Shortcut… | Press any key combination to set a new shortcut |
 | Show: Used / Remaining | A toggle: show how much you've used, or how much is left |
@@ -112,6 +113,7 @@ brew install --cask hellocket/tap/claudecount
 | Show Weekly Usage | On: `21 ✻ 33`. Off: only the 5-hour number, `✻ 21` |
 | Language › | Switch between English and 한국어 |
 | Launch at Login | Starts ClaudeCount when you log in to your Mac |
+| Check for Updates | Checks GitHub for a newer version. If there is one, click **Update Now**: ClaudeCount downloads it, replaces itself and reopens. Your settings are kept |
 | Quit ⌘Q | Quits ClaudeCount |
 
 ### Shortcut
@@ -128,7 +130,7 @@ brew install --cask hellocket/tap/claudecount
 |---|---|
 | No Claude Code login | Install Claude Code and log in with `claude` in Terminal (steps 1–2) |
 | Login expired | Run `claude` in Terminal once to log in again, then refresh |
-| Server error (HTTP 429) | Too many requests. Wait a few minutes |
+| Server error (HTTP 429) | Too many requests. ClaudeCount waits and retries automatically; avoid pressing Refresh repeatedly |
 | Network error | Check your internet connection |
 
 The status log is at `~/Library/Logs/ClaudeCount.log`. It never contains tokens or other secrets.

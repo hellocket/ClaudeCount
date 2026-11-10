@@ -161,7 +161,7 @@ let keychainService = "Claude Code-credentials"
 let usageURL = URL(string: "https://api.anthropic.com/api/oauth/usage")!
 let tokenURL = URL(string: "https://console.anthropic.com/v1/oauth/token")!
 let oauthClientID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
-let pollInterval: TimeInterval = 300 // 5 minutes
+let pollChoices = [1, 2, 5, 10]   // refresh interval options, in minutes (default 5)
 let launchAgentLabel = "com.local.claudecount"
 
 // MARK: - Shell helper (uses /usr/bin/security, so no keychain access prompt)
@@ -337,6 +337,59 @@ func fetchUsage() async throws -> Usage {
         guard let n = await refresh(readCredentials() ?? c) else { throw FetchError.unauthorized }
         return try await callUsage(n.accessToken)
     }
+}
+
+// MARK: - Updates (GitHub Releases)
+let releasesAPI = URL(string: "https://api.github.com/repos/hellocket/ClaudeCount/releases/latest")!
+var currentVersion: String { Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0" }
+
+/// "1.0.10" > "1.0.9"
+func isNewer(_ a: String, than b: String) -> Bool {
+    let x = a.split(separator: ".").map { Int($0) ?? 0 }, y = b.split(separator: ".").map { Int($0) ?? 0 }
+    for i in 0..<max(x.count, y.count) {
+        let p = i < x.count ? x[i] : 0, q = i < y.count ? y[i] : 0
+        if p != q { return p > q }
+    }
+    return false
+}
+
+enum UpdateError: Error { case network, noAsset, badArchive, wrongApp }
+
+/// Latest release on GitHub: its version and the ClaudeCount.zip download link
+func latestRelease() async throws -> (version: String, zip: URL) {
+    var req = URLRequest(url: releasesAPI)
+    req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+    req.timeoutInterval = 15
+    guard let (data, resp) = try? await URLSession.shared.data(for: req),
+          (resp as? HTTPURLResponse)?.statusCode == 200,
+          let j = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let tag = j["tag_name"] as? String else { throw UpdateError.network }
+    let version = tag.trimmingCharacters(in: CharacterSet(charactersIn: "vV"))
+    let assets = j["assets"] as? [[String: Any]] ?? []
+    guard let link = assets.first(where: { ($0["name"] as? String) == "ClaudeCount.zip" })?["browser_download_url"] as? String,
+          let zip = URL(string: link), zip.scheme == "https", zip.host == "github.com" else { throw UpdateError.noAsset }
+    return (version, zip)
+}
+
+/// Download the zip, check it really is ClaudeCount, then swap the app in place and relaunch.
+func installUpdate(from zip: URL) async throws {
+    guard let (file, resp) = try? await URLSession.shared.download(from: zip),
+          (resp as? HTTPURLResponse)?.statusCode == 200 else { throw UpdateError.network }
+    let work = FileManager.default.temporaryDirectory.appendingPathComponent("ClaudeCount-update-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+    guard run("/usr/bin/ditto", ["-x", "-k", file.path, work.path]).status == 0 else { throw UpdateError.badArchive }
+    // find ClaudeCount.app inside the archive
+    let found = FileManager.default.enumerator(at: work, includingPropertiesForKeys: nil)?
+        .compactMap { $0 as? URL }.first { $0.lastPathComponent == "ClaudeCount.app" }
+    guard let newApp = found, let newBundle = Bundle(url: newApp),
+          newBundle.bundleIdentifier == Bundle.main.bundleIdentifier else { throw UpdateError.wrongApp }
+    run("/usr/bin/xattr", ["-dr", "com.apple.quarantine", newApp.path])
+    // after this app quits: replace the bundle and open the new one
+    let script = "while /bin/kill -0 \"$1\" 2>/dev/null; do /bin/sleep 0.2; done; /bin/rm -rf \"$3\" && /usr/bin/ditto \"$2\" \"$3\" && /usr/bin/open \"$3\""
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: "/bin/sh")
+    p.arguments = ["-c", script, "sh", String(ProcessInfo.processInfo.processIdentifier), newApp.path, Bundle.main.bundlePath]
+    try p.run()
 }
 
 // MARK: - Launch at login (LaunchAgent)
@@ -527,6 +580,22 @@ final class InfoRowView: NSView {
     }
 }
 
+/// A short gray note that wraps (used under the interval choices)
+final class NoteView: NSView {
+    init(_ text: String) {
+        let label = NSTextField(wrappingLabelWithString: text)
+        label.font = .menuFont(ofSize: 11)
+        label.textColor = softGray
+        let w: CGFloat = 230
+        label.preferredMaxLayoutWidth = w - 28
+        label.frame.size = label.sizeThatFits(NSSize(width: w - 28, height: 200))
+        super.init(frame: NSRect(x: 0, y: 0, width: w, height: label.frame.height + 8))
+        label.frame.origin = NSPoint(x: 14, y: 4)
+        addSubview(label)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+}
+
 func row(_ view: NSView) -> NSMenuItem { let m = NSMenuItem(); m.view = view; return m }
 
 /// A light gray divider spanning the same width as the progress bars
@@ -599,8 +668,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationDidFinishLaunching(_ n: Notification) {
         setBoxes([nil, nil], remain: [nil, nil])
         rebuildMenu()
-        timer = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in self?.update() }
-        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in self?.update() }
+        restartTimer()
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in self?.scheduledUpdate() }
         HotKey.action = { [weak self] in self?.update() }
         HotKey.register(HotKey.saved)
         log("hotkey: \(HotKey.saved?.label ?? "none") \(HotKey.active ? "ok" : "fail")")
@@ -617,6 +686,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         recorder?.show()
     }
 
+    // ── Refresh interval ──
+    var pollMinutes: Int {
+        get { let v = UserDefaults.standard.integer(forKey: "pollMinutes"); return pollChoices.contains(v) ? v : 5 }
+        set { UserDefaults.standard.set(newValue, forKey: "pollMinutes"); restartTimer() }
+    }
+    func restartTimer() {
+        timer?.invalidate()
+        timer = Timer.scheduledTimer(withTimeInterval: TimeInterval(pollMinutes * 60), repeats: true) { [weak self] _ in self?.scheduledUpdate() }
+    }
+
+    // ── Rate-limit back-off: after HTTP 429, wait 2 → 4 → 8 → 16 → 30 min before asking again ──
+    var backoffMinutes = 0
+    var backoffUntil: Date?
+    var backoffTimer: Timer?
+    func startBackoff() {
+        backoffMinutes = min(max(backoffMinutes * 2, 2), 30)
+        backoffUntil = Date().addingTimeInterval(TimeInterval(backoffMinutes * 60))
+        backoffTimer?.invalidate()
+        backoffTimer = Timer.scheduledTimer(withTimeInterval: TimeInterval(backoffMinutes * 60), repeats: false) { [weak self] _ in self?.update() }
+        log("rate limited: waiting \(backoffMinutes) min")
+    }
+    /// Automatic refreshes (timer, wake) skip while backing off; "Refresh Now" always runs
+    func scheduledUpdate() {
+        if let until = backoffUntil, Date() < until { return }
+        update()
+    }
+
     @objc func update() {
         item.button?.alphaValue = 0.4 // dim slightly while refreshing
         Task { @MainActor in
@@ -624,8 +720,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 last = try await fetchUsage()
                 lastUpdated = Date()
                 lastError = nil
+                backoffMinutes = 0; backoffUntil = nil
             } catch {
                 lastError = (error as? FetchError) ?? .parse
+                if case .http(429) = lastError { startBackoff() }
             }
             render()
         }
@@ -711,7 +809,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         else { try? line.write(toFile: logPath, atomically: true, encoding: .utf8) }
     }
 
-    // e.g. " · 4h01m 남음 (07:30)"; more than a day away: " · 62h05m 남음 (목 18:00)"
+    // e.g. " · 4h01m left (07:30)"; more than a day away: " · 62h05m left (Thu 18:00)"
     func resetText(_ d: Date?) -> String {
         guard let d else { return "" }
         let s = max(0, Int(d.timeIntervalSinceNow))
@@ -775,6 +873,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // ── Block: refresh ──
         menu.addItem(LineItem.make())
+        let intervalItem = NSMenuItem(title: L("새로고침 간격", "Refresh Interval"), action: nil, keyEquivalent: "")
+        let intervalRow = MenuRowView(L("새로고침 간격", "Refresh Interval"), right: "›", closesMenu: false) {}
+        intervalItem.view = intervalRow
+        intervalItem.submenu = makeIntervalMenu()
+        intervalRow.onClickOverride = { [weak self, weak intervalRow] in   // click also opens the choices, in case hover doesn't
+            guard let self, let intervalRow else { return }
+            self.makeIntervalMenu().popUp(positioning: nil, at: NSPoint(x: intervalRow.bounds.width - 8, y: intervalRow.bounds.height), in: intervalRow)
+        }
+        menu.addItem(intervalItem)
         let hk = HotKey.saved.map { HotKey.active ? $0.label : "\($0.label) ⚠︎" }
         menu.addItem(row(MenuRowView(L("지금 새로고침", "Refresh Now"), right: hk) { [weak self] in self?.update() }))
         menu.addItem(row(MenuRowView(L("단축키 변경…", "Change Shortcut…"), gray: true) { [weak self] in self?.changeShortcut() }))
@@ -783,7 +890,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(LineItem.make())
         menu.addItem(row(SegmentRowView(title: L("표시", "Show"), segments: [L("사용량", "Used"), L("잔여량", "Remaining")],
                                         selected: showUsed ? 0 : 1, target: self, action: #selector(numbersChanged(_:)))))
-        // only when the account has model limits; the title names them (e.g. "Fable 한도 보기")
+        // only when the account has model limits; the title names them (e.g. "Show Fable Limit")
         if let u = last, !u.extras.isEmpty {
             let names = u.extras.map { $0.0 }.joined(separator: " · ")
             menu.addItem(row(MenuRowView(L("\(names) 한도 보기", "Show \(names) Limit"), checked: showModelLimits,
@@ -823,6 +930,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                   closesMenu: false) { [weak self] in self?.toggleAuto() }
         checkViews["auto"] = autoRow
         menu.addItem(row(autoRow))
+        menu.addItem(row(MenuRowView(L("업데이트 확인", "Check for Updates"), right: "v\(currentVersion)") { [weak self] in
+            self?.checkForUpdates()
+        }))
         let quit = row(MenuRowView(L("종료", "Quit"), right: "⌘Q") { NSApp.terminate(nil) })
         quit.keyEquivalent = "q"; quit.action = #selector(NSApplication.terminate(_:))  // ⌘Q still works while the menu is open
         menu.addItem(quit)
@@ -874,6 +984,61 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refreshUsageRows()   // update the open menu in place
         render()             // menu bar icon; menu rebuilt on close
     }
+    // ── Check for updates ──
+    func alert(_ title: String, _ text: String, buttons: [String]) -> NSApplication.ModalResponse {
+        NSApp.activate(ignoringOtherApps: true)
+        let a = NSAlert()
+        a.messageText = title; a.informativeText = text
+        buttons.forEach { a.addButton(withTitle: $0) }
+        return a.runModal()
+    }
+    func checkForUpdates() {
+        Task { @MainActor in
+            do {
+                let latest = try await latestRelease()
+                guard isNewer(latest.version, than: currentVersion) else {
+                    _ = alert(L("최신 버전이에요", "You're up to date"),
+                              L("지금 쓰는 ClaudeCount \(currentVersion)이 최신 버전이에요.", "ClaudeCount \(currentVersion) is the latest version."),
+                              buttons: [L("확인", "OK")])
+                    return
+                }
+                let answer = alert(L("새 버전 \(latest.version)이 있어요", "Version \(latest.version) is available"),
+                                   L("지금 버전은 \(currentVersion)이에요. 업데이트하면 앱이 잠깐 꺼졌다가 새 버전으로 다시 켜져요.",
+                                     "You have \(currentVersion). ClaudeCount will quit briefly and reopen as the new version."),
+                                   buttons: [L("지금 업데이트", "Update Now"), L("나중에", "Later")])
+                guard answer == .alertFirstButtonReturn else { return }
+                item.button?.alphaValue = 0.4
+                try await installUpdate(from: latest.zip)
+                log("update: installing \(latest.version)")
+                NSApp.terminate(nil)
+            } catch {
+                item.button?.alphaValue = 1
+                _ = alert(L("업데이트를 확인하지 못했어요", "Couldn't check for updates"),
+                          L("인터넷 연결을 확인하고 잠시 후 다시 시도해 주세요.\nhttps://github.com/hellocket/ClaudeCount/releases 에서 직접 받을 수도 있어요.",
+                            "Check your internet connection and try again later.\nYou can also download it from https://github.com/hellocket/ClaudeCount/releases"),
+                          buttons: [L("확인", "OK")])
+            }
+        }
+    }
+
+    func makeIntervalMenu() -> NSMenu {
+        let m = NSMenu()
+        for mins in pollChoices {
+            let it = NSMenuItem(title: L("\(mins)분", mins == 1 ? "1 minute" : "\(mins) minutes"), action: #selector(setInterval(_:)), keyEquivalent: "")
+            it.representedObject = mins; it.target = self
+            it.state = mins == pollMinutes ? .on : .off
+            m.addItem(it)
+        }
+        m.addItem(.separator())
+        let note = NSMenuItem()
+        note.view = NoteView(L("너무 자주 요청하면 서버 오류가 날 수 있어요.\n오류가 나면 잠시 쉬었다가 다시 확인해 드릴게요.",
+                               "Checking too often can cause server errors.\nIf that happens, ClaudeCount waits a bit and checks again."))
+        m.addItem(note)
+        return m
+    }
+    @objc func setInterval(_ sender: NSMenuItem) {
+        if let mins = sender.representedObject as? Int { pollMinutes = mins; rebuildMenu() }
+    }
     @objc func setLanguage(_ sender: NSMenuItem) {
         UserDefaults.standard.set(sender.representedObject as? String, forKey: "lang")
         render()
@@ -882,6 +1047,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         setAutoStart(!autoStartEnabled())
         checkViews["auto"]?.checked = autoStartEnabled()
     }
+}
+
+if ProcessInfo.processInfo.environment["CLAUDECOUNT_UPDATE_TEST"] == "1" {
+    // developer test: install the latest release over this copy without asking, then quit
+    Task {
+        do { let r = try await latestRelease(); print("latest", r.version, "current", currentVersion)
+             if isNewer(r.version, than: currentVersion) { try await installUpdate(from: r.zip); print("installing") } }
+        catch { print("update error", error) }
+        exit(0)
+    }
+    RunLoop.main.run()
 }
 
 let app = NSApplication.shared
