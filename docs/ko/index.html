@@ -143,6 +143,13 @@ h2 { font-size: clamp(24px, 3.4vw, 32px); font-weight: 700; line-height: 1.25; }
 .code button { flex: none; font: 500 12.5px var(--font-sans); color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 7px; padding: 5px 9px; cursor: pointer; }
 .code button:hover { border-color: var(--claude); }
 .code button:focus-visible { outline: 2px solid var(--claude); outline-offset: 2px; }
+.dl { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 8px; }
+.dl a { display: inline-flex; align-items: center; min-height: 40px; padding: 0 16px; border-radius: 9px; font: 600 14.5px var(--font-sans); text-decoration: none; border: 1px solid var(--line); color: var(--fg); background: var(--panel); }
+.dl a.primary { background: var(--claude); border-color: var(--claude); color: var(--bg); }
+.dl a:hover { border-color: var(--claude); }
+.dl a.primary:hover { filter: brightness(1.08); }
+.dl a:focus-visible { outline: 2px solid var(--claude); outline-offset: 2px; }
+.steps .sub { margin-top: 16px; }
 
 .stats { display: flex; flex-wrap: wrap; gap: 8px 24px; margin-top: 28px; color: var(--fg-2); font-size: 14.5px; }
 .stats b { font-family: var(--font-mono); font-style: italic; font-weight: 500; color: var(--claude); font-size: 17px; margin-right: 4px; }
@@ -238,7 +245,7 @@ footer a { color: var(--fg-2); }
           <ul>
             <li>언어<span class="k">›</span></li>
             <li class="on">로그인 시 자동 실행</li>
-            <li>업데이트 확인<span class="k">v1.0.2</span></li>
+            <li>업데이트 확인<span class="k">v1.0.3</span></li>
             <li>종료<span class="k">⌘Q</span></li>
           </ul>
         </div>
@@ -293,8 +300,16 @@ footer a { color: var(--fg-2); }
           <div class="code"><code id="cmd-login">claude</code><button type="button" data-copy="cmd-login">복사</button></div>
         </div></li>
         <li><div>
-          <h3>ClaudeCount 열기</h3>
-          <p><a href="https://github.com/hellocket/ClaudeCount/releases" style="color:var(--claude)">Releases</a>에서 내려받아(또는 <code>brew install --cask hellocket/tap/claudecount</code>) 응용 프로그램 폴더로 옮겨서 열어요. 경고가 뜨면 시스템 설정 → 개인정보 보호 및 보안 → "그래도 열기".</p>
+          <h3>ClaudeCount 설치</h3>
+          <div class="dl">
+            <a class="primary" href="https://github.com/hellocket/ClaudeCount/releases/latest/download/ClaudeCount.dmg">DMG 내려받기</a>
+            <a href="https://github.com/hellocket/ClaudeCount/releases/latest/download/ClaudeCount.zip">ZIP 내려받기</a>
+          </div>
+          <p style="margin-top:8px">응용 프로그램 폴더로 옮겨서 열어요. 경고가 뜨면 시스템 설정 → 개인정보 보호 및 보안 → "그래도 열기".</p>
+          <p class="sub">Homebrew로 설치해도 돼요. 아래 두 줄을 순서대로 실행하세요.</p>
+          <div class="code"><code id="cmd-trust">brew trust --cask hellocket/tap/claudecount</code><button type="button" data-copy="cmd-trust">복사</button></div>
+          <div class="code"><code id="cmd-brew">brew install --cask hellocket/tap/claudecount</code><button type="button" data-copy="cmd-brew">복사</button></div>
+          <p style="margin-top:8px">최신 Homebrew는 공식이 아닌 tap의 앱을 처음 한 번 신뢰로 등록해야 해요. <code>brew trust</code>가 없다고 나오면 첫 줄은 건너뛰세요.</p>
         </div></li>
       </ol>
     </div>

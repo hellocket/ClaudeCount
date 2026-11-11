@@ -68,8 +68,11 @@ claude
 **Homebrew**
 
 ```bash
+brew trust --cask hellocket/tap/claudecount
 brew install --cask hellocket/tap/claudecount
 ```
+
+- The first line is needed on newer Homebrew, which only installs apps from non-official taps after you trust them. You only need it once. If your Homebrew says `brew trust` doesn't exist, skip it.
 
 **Or download** `ClaudeCount.dmg` or `ClaudeCount.zip` from [Releases](https://github.com/hellocket/ClaudeCount/releases).
 

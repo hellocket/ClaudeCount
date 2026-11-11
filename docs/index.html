@@ -143,6 +143,13 @@ h2 { font-size: clamp(24px, 3.4vw, 32px); font-weight: 700; line-height: 1.25; }
 .code button { flex: none; font: 500 12.5px var(--font-sans); color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 7px; padding: 5px 9px; cursor: pointer; }
 .code button:hover { border-color: var(--claude); }
 .code button:focus-visible { outline: 2px solid var(--claude); outline-offset: 2px; }
+.dl { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 8px; }
+.dl a { display: inline-flex; align-items: center; min-height: 40px; padding: 0 16px; border-radius: 9px; font: 600 14.5px var(--font-sans); text-decoration: none; border: 1px solid var(--line); color: var(--fg); background: var(--panel); }
+.dl a.primary { background: var(--claude); border-color: var(--claude); color: var(--bg); }
+.dl a:hover { border-color: var(--claude); }
+.dl a.primary:hover { filter: brightness(1.08); }
+.dl a:focus-visible { outline: 2px solid var(--claude); outline-offset: 2px; }
+.steps .sub { margin-top: 16px; }
 
 .stats { display: flex; flex-wrap: wrap; gap: 8px 24px; margin-top: 28px; color: var(--fg-2); font-size: 14.5px; }
 .stats b { font-family: var(--font-mono); font-style: italic; font-weight: 500; color: var(--claude); font-size: 17px; margin-right: 4px; }
@@ -238,7 +245,7 @@ footer a { color: var(--fg-2); }
           <ul>
             <li>Language<span class="k">›</span></li>
             <li class="on">Launch at Login</li>
-            <li>Check for Updates<span class="k">v1.0.2</span></li>
+            <li>Check for Updates<span class="k">v1.0.3</span></li>
             <li>Quit<span class="k">⌘Q</span></li>
           </ul>
         </div>
@@ -293,8 +300,16 @@ footer a { color: var(--fg-2); }
           <div class="code"><code id="cmd-login">claude</code><button type="button" data-copy="cmd-login">Copy</button></div>
         </div></li>
         <li><div>
-          <h3>Open ClaudeCount</h3>
-          <p>Download it from <a href="https://github.com/hellocket/ClaudeCount/releases" style="color:var(--claude)">Releases</a> (or <code>brew install --cask hellocket/tap/claudecount</code>), move it to Applications and open it. If macOS warns you, go to System Settings → Privacy &amp; Security → “Open Anyway”.</p>
+          <h3>Install ClaudeCount</h3>
+          <div class="dl">
+            <a class="primary" href="https://github.com/hellocket/ClaudeCount/releases/latest/download/ClaudeCount.dmg">Download DMG</a>
+            <a href="https://github.com/hellocket/ClaudeCount/releases/latest/download/ClaudeCount.zip">Download ZIP</a>
+          </div>
+          <p style="margin-top:8px">Move ClaudeCount to Applications and open it. If macOS warns you, go to System Settings → Privacy &amp; Security → “Open Anyway”.</p>
+          <p class="sub">Or install with Homebrew. Run these two lines in order.</p>
+          <div class="code"><code id="cmd-trust">brew trust --cask hellocket/tap/claudecount</code><button type="button" data-copy="cmd-trust">Copy</button></div>
+          <div class="code"><code id="cmd-brew">brew install --cask hellocket/tap/claudecount</code><button type="button" data-copy="cmd-brew">Copy</button></div>
+          <p style="margin-top:8px">Newer Homebrew asks you to trust apps from non-official taps once. If it says <code>brew trust</code> doesn’t exist, skip the first line.</p>
         </div></li>
       </ol>
     </div>
