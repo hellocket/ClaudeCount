@@ -3,7 +3,7 @@
 # build.sh runs this at the end. You can also run it on its own once ClaudeCount.app is built.
 set -e
 cd "$(dirname "$0")"
-APP="ClaudeCount.app"
+APP="build.noindex/ClaudeCount.app"
 [ -d "$APP" ] || { echo "Run ./build.sh first"; exit 1; }
 VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP/Contents/Info.plist")
 

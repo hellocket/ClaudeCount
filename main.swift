@@ -2,12 +2,14 @@
 // Data: queries /api/oauth/usage with the OAuth token Claude Code keeps in the keychain
 import AppKit
 import Carbon
+import ServiceManagement
+import Security
 
-// MARK: - Language (Korean / English, chosen in the menu; defaults to the system language)
+// MARK: - Language (Korean / English; Korean by default)
 enum Lang {
     static var isKorean: Bool {
         if let v = UserDefaults.standard.string(forKey: "lang") { return v == "ko" }
-        return (Locale.preferredLanguages.first ?? "en").hasPrefix("ko")
+        return true   // Korean by default; switch in the menu (Language) or the sign-in guide (한/EN)
     }
 }
 func L(_ ko: String, _ en: String) -> String { Lang.isKorean ? ko : en }
@@ -162,18 +164,24 @@ let usageURL = URL(string: "https://api.anthropic.com/api/oauth/usage")!
 let tokenURL = URL(string: "https://console.anthropic.com/v1/oauth/token")!
 let oauthClientID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 let pollChoices = [1, 2, 5, 10]   // refresh interval options, in minutes (default 5)
-let launchAgentLabel = "com.local.claudecount"
+let legacyBundleID = "com.local.claudecount"                // used up to 1.0.2
 
 // MARK: - Shell helper (uses /usr/bin/security, so no keychain access prompt)
 @discardableResult
-func run(_ path: String, _ args: [String]) -> (status: Int32, out: String) {
+func run(_ path: String, _ args: [String], input: String? = nil) -> (status: Int32, out: String) {
     let p = Process()
     p.executableURL = URL(fileURLWithPath: path)
     p.arguments = args
     let pipe = Pipe()
     p.standardOutput = pipe
-    p.standardError = Pipe()
+    p.standardError = FileHandle.nullDevice
+    let stdin = Pipe()
+    if input != nil { p.standardInput = stdin }
     do { try p.run() } catch { return (-1, "") }
+    if let input {
+        stdin.fileHandleForWriting.write(Data(input.utf8))
+        try? stdin.fileHandleForWriting.close()
+    }
     let data = pipe.fileHandleForReading.readDataToEndOfFile()
     p.waitUntilExit()
     return (p.terminationStatus, String(data: data, encoding: .utf8) ?? "")
@@ -214,7 +222,12 @@ func writeCredentials(_ c: Credentials) -> Bool {
     raw["claudeAiOauth"] = c.oauth
     guard let data = try? JSONSerialization.data(withJSONObject: raw),
           let str = String(data: data, encoding: .utf8) else { return false }
-    return run("/usr/bin/security", ["add-generic-password", "-U", "-a", acct, "-s", keychainService, "-w", str]).status == 0
+    // Sent through stdin (security -i), so the token never shows up in the process list
+    func quoted(_ v: String) -> String {
+        "\"" + v.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
+    }
+    let command = "add-generic-password -U -a \(quoted(acct)) -s \(quoted(keychainService)) -w \(quoted(str))\n"
+    return run("/usr/bin/security", ["-i"], input: command).status == 0
 }
 
 // Refresh an expired token the same way Claude Code does, and save it back to the keychain
@@ -265,17 +278,11 @@ func money(_ any: Any?) -> String? {
     return f.string(from: NSNumber(value: minor / pow(10, Double(exp))))
 }
 
-enum FetchError: Error { case noCredentials, unauthorized, http(Int), parse, network }
+enum FetchError: Error, Equatable { case noCredentials, unauthorized, http(Int), parse, network }
 
 func parseWindow(_ any: Any?) -> Window? {
     guard let d = any as? [String: Any], let u = (d["utilization"] as? NSNumber)?.doubleValue else { return nil }
-    var reset: Date?
-    if let s = d["resets_at"] as? String {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        reset = f.date(from: s) ?? ISO8601DateFormatter().date(from: s)
-    }
-    return Window(used: u, resetsAt: reset)
+    return Window(used: u, resetsAt: parseDate(d["resets_at"]))
 }
 
 func callUsage(_ token: String) async throws -> Usage {
@@ -339,6 +346,178 @@ func fetchUsage() async throws -> Usage {
     }
 }
 
+// MARK: - Claude Code login helper
+/// Writes a small Terminal script that installs Claude Code if it is missing, then runs `claude auth login`.
+func openLoginInTerminal() {
+    let ko = Lang.isKorean
+    let t = { (k: String, e: String) in ko ? k : e }
+    let script = """
+    #!/bin/zsh
+    export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+    clear
+    echo "\(t("ClaudeCount: Claude 로그인을 도와드릴게요.", "ClaudeCount: let's sign in to Claude."))"
+    echo ""
+    if ! command -v claude >/dev/null 2>&1; then
+      echo "\(t("1/2  Claude Code를 설치하고 있어요… (1분 정도 걸려요)", "1/2  Installing Claude Code… (about a minute)"))"
+      curl -fsSL https://claude.ai/install.sh | bash
+      export PATH="$HOME/.local/bin:$PATH"
+      if ! command -v claude >/dev/null 2>&1; then
+        echo ""
+        echo "\(t("설치에 실패했어요. 인터넷 연결을 확인하고 ClaudeCount 메뉴에서 다시 시도해 주세요.", "Install failed. Check your internet connection and try again from the ClaudeCount menu."))"
+        read -k1 "?\(t("아무 키나 누르면 닫혀요.", "Press any key to close."))"; exit 1
+      fi
+    fi
+    echo "\(t("2/2  브라우저가 열리면 Claude 계정으로 로그인하고 「승인(Authorize)」을 눌러 주세요.", "2/2  When your browser opens, sign in to Claude and click Authorize."))"
+    echo ""
+    if claude auth login --claudeai; then
+      echo ""
+      echo "\(t("✓ 로그인 완료! 이 창은 닫아도 돼요. ClaudeCount가 곧 숫자를 보여 줄 거예요.", "✓ Signed in! You can close this window. ClaudeCount will show your numbers shortly."))"
+    else
+      echo ""
+      echo "\(t("로그인하지 못했어요. Claude Code를 쓸 수 있는 요금제(Pro, Max 등)인지 확인해 주세요.", "Sign-in didn't finish. Make sure your plan includes Claude Code (Pro, Max, and more)."))"
+    fi
+    echo ""
+    read -k1 "?\(t("아무 키나 누르면 닫혀요.", "Press any key to close."))"
+    """
+    let dir = URL(fileURLWithPath: NSHomeDirectory() + "/Library/Application Support/ClaudeCount")
+    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let file = dir.appendingPathComponent("Log in to Claude.command")
+    try? script.write(to: file, atomically: true, encoding: .utf8)
+    try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
+    let terminal = URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app")
+    NSWorkspace.shared.open([file], withApplicationAt: terminal, configuration: NSWorkspace.OpenConfiguration())
+}
+
+// MARK: - Login guide window (follows along while the user signs in)
+func claudeInstalled() -> Bool {
+    let paths = [NSHomeDirectory() + "/.local/bin/claude", "/opt/homebrew/bin/claude", "/usr/local/bin/claude"]
+    return paths.contains { FileManager.default.isExecutableFile(atPath: $0) }
+}
+
+final class LoginGuide: NSObject, NSWindowDelegate {
+    enum Step: Int { case install, browser, done }
+    let panel: NSPanel
+    var rows: [(icon: NSTextField, title: NSTextField, detail: NSTextField)] = []
+    let footer = NSTextField(wrappingLabelWithString: "")
+    var again: NSButton!
+    var timer: Timer?
+    let onDone: () -> Void
+    let reopen: () -> Void
+    var onLanguage: () -> Void = {}
+
+    init(reopenTerminal: @escaping () -> Void, onDone: @escaping () -> Void) {
+        self.onDone = onDone; self.reopen = reopenTerminal
+        panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 440, height: 300), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        super.init()
+        build()
+        refresh()
+    }
+
+    /// (Re)builds every label in the current language
+    func build() {
+        rows = []
+        panel.title = L("Claude 로그인", "Sign In to Claude")
+        panel.isReleasedWhenClosed = false
+        panel.level = .floating
+        panel.delegate = self
+
+        let head = NSTextField(wrappingLabelWithString: L("터미널 창이 열렸어요. 아래 순서대로 진행돼요.\n이 창은 진행 상황에 맞춰 알아서 바뀌어요.",
+                                                         "A Terminal window opened. Here's what happens next —\nthis window updates as you go."))
+        head.font = .systemFont(ofSize: 13)
+        let steps: [(String, String)] = [
+            (L("Claude Code 설치", "Install Claude Code"),
+             L("없으면 터미널이 자동으로 설치해요. 1분 정도 기다려 주세요.", "Terminal installs it if it's missing. Takes about a minute.")),
+            (L("브라우저에서 로그인하고 「승인」 누르기", "Sign in in your browser and click Authorize"),
+             L("브라우저가 열리면 로그인하고 「Authorize(승인)」를 눌러요.\n코드가 보이면 복사해서 터미널에 붙여 넣고 Enter를 눌러요.",
+               "When your browser opens, sign in to Claude and click Authorize.\nIf it shows a code, copy it into Terminal and press Return.")),
+            (L("완료", "Done"), L("숫자가 메뉴바에 나타나요.", "Your numbers appear in the menu bar.")),
+        ]
+        let stack = NSStackView()
+        stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 12
+        let langToggle = NSSegmentedControl(labels: ["한", "EN"], trackingMode: .selectOne, target: self, action: #selector(langChanged(_:)))
+        langToggle.selectedSegment = Lang.isKorean ? 0 : 1
+        langToggle.controlSize = .small
+        let spacer = NSView(); spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let top = NSStackView(views: [head, spacer, langToggle]); top.alignment = .top; top.spacing = 10
+        stack.addArrangedSubview(top)
+        for (t, d) in steps {
+            let icon = NSTextField(labelWithString: "○"); icon.font = .systemFont(ofSize: 15, weight: .semibold)
+            icon.alignment = .center; icon.widthAnchor.constraint(equalToConstant: 20).isActive = true
+            let title = NSTextField(labelWithString: t); title.font = .systemFont(ofSize: 13, weight: .semibold)
+            let detail = NSTextField(wrappingLabelWithString: d); detail.font = .systemFont(ofSize: 11.5); detail.textColor = .secondaryLabelColor
+            detail.preferredMaxLayoutWidth = 360
+            let texts = NSStackView(views: [title, detail]); texts.orientation = .vertical; texts.alignment = .leading; texts.spacing = 2
+            let rowStack = NSStackView(views: [icon, texts]); rowStack.alignment = .top; rowStack.spacing = 8
+            stack.addArrangedSubview(rowStack)
+            rows.append((icon, title, detail))
+        }
+        footer.font = .systemFont(ofSize: 11); footer.textColor = .secondaryLabelColor
+        footer.stringValue = L("Claude Code를 쓸 수 있는 요금제(Pro, Max 등)가 필요해요.", "Requires a Claude plan that includes Claude Code (Pro, Max, and more).")
+        again = NSButton(title: L("터미널 다시 열기", "Reopen Terminal"), target: self, action: #selector(reopenTapped))
+        again.bezelStyle = .rounded
+        footer.maximumNumberOfLines = 1; footer.cell?.wraps = false
+        head.preferredMaxLayoutWidth = 1000
+        let gap = NSView(); gap.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let buttons = NSStackView(views: [footer, gap, again]); buttons.alignment = .centerY; buttons.spacing = 10
+        stack.addArrangedSubview(buttons)
+        // Rows span the full width so the right edge lines up with the left (20pt each side)
+        for row in [top, buttons] { row.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true }
+        stack.widthAnchor.constraint(greaterThanOrEqualToConstant: 400).isActive = true
+        let content = NSView()
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
+            stack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -20),
+            stack.topAnchor.constraint(equalTo: content.topAnchor, constant: 18),
+            stack.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -18),
+        ])
+        panel.contentView = content
+    }
+
+    @objc func langChanged(_ sender: NSSegmentedControl) {
+        UserDefaults.standard.set(sender.selectedSegment == 0 ? "ko" : "en", forKey: "lang")
+        build(); refresh()
+        panel.setContentSize(panel.contentView!.fittingSize)
+        onLanguage()
+    }
+
+    func show() {
+        panel.layoutIfNeeded()
+        panel.setContentSize(panel.contentView!.fittingSize)
+        if let screen = NSScreen.main {   // top-right corner, out of the Terminal window's way
+            let f = screen.visibleFrame
+            panel.setFrameOrigin(NSPoint(x: f.maxX - panel.frame.width - 20, y: f.maxY - panel.frame.height - 20))
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        panel.orderFrontRegardless()
+        timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.refresh() }
+    }
+
+    @objc func reopenTapped() { reopen() }
+
+    func refresh() {
+        let loggedIn = readCredentials() != nil
+        let current: Step = loggedIn ? .done : (claudeInstalled() ? .browser : .install)
+        for (i, r) in rows.enumerated() {
+            let finished = i < current.rawValue || (current == .done && i == Step.done.rawValue)
+            let active = i == current.rawValue && current != .done
+            r.icon.stringValue = finished ? "✓" : (active ? "●" : "○")
+            r.icon.textColor = finished ? .systemGreen : (active ? AppDelegate.claudeOrange : .tertiaryLabelColor)
+            r.title.textColor = (finished || active) ? .labelColor : .tertiaryLabelColor
+        }
+        if loggedIn {
+            timer?.invalidate()
+            footer.stringValue = L("로그인 완료! 터미널 창은 닫아도 돼요.", "Signed in! You can close the Terminal window.")
+            again.isHidden = true
+            onDone()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in self?.panel.close() }
+        }
+    }
+
+    func windowWillClose(_ n: Notification) { timer?.invalidate() }
+}
+
 // MARK: - Updates (GitHub Releases)
 let releasesAPI = URL(string: "https://api.github.com/repos/hellocket/ClaudeCount/releases/latest")!
 var currentVersion: String { Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0" }
@@ -354,6 +533,18 @@ func isNewer(_ a: String, than b: String) -> Bool {
 }
 
 enum UpdateError: Error { case network, noAsset, badArchive, wrongApp }
+
+/// True when `app` carries the same signature as this running copy (same certificate and bundle ID),
+/// so a look-alike app uploaded by someone else is never installed.
+func signedLikeThisApp(_ app: URL) -> Bool {
+    var me: SecCode?, meStatic: SecStaticCode?, req: SecRequirement?, other: SecStaticCode?
+    guard SecCodeCopySelf([], &me) == errSecSuccess, let me,
+          SecCodeCopyStaticCode(me, [], &meStatic) == errSecSuccess, let meStatic,
+          SecCodeCopyDesignatedRequirement(meStatic, [], &req) == errSecSuccess, let req,
+          SecStaticCodeCreateWithPath(app as CFURL, [], &other) == errSecSuccess, let other else { return false }
+    let flags = SecCSFlags(rawValue: kSecCSCheckAllArchitectures | kSecCSStrictValidate | kSecCSCheckNestedCode)
+    return SecStaticCodeCheckValidity(other, flags, req) == errSecSuccess
+}
 
 /// Latest release on GitHub: its version and the ClaudeCount.zip download link
 func latestRelease() async throws -> (version: String, zip: URL) {
@@ -382,7 +573,8 @@ func installUpdate(from zip: URL) async throws {
     let found = FileManager.default.enumerator(at: work, includingPropertiesForKeys: nil)?
         .compactMap { $0 as? URL }.first { $0.lastPathComponent == "ClaudeCount.app" }
     guard let newApp = found, let newBundle = Bundle(url: newApp),
-          newBundle.bundleIdentifier == Bundle.main.bundleIdentifier else { throw UpdateError.wrongApp }
+          newBundle.bundleIdentifier == Bundle.main.bundleIdentifier,
+          signedLikeThisApp(newApp) else { throw UpdateError.wrongApp }
     run("/usr/bin/xattr", ["-dr", "com.apple.quarantine", newApp.path])
     // after this app quits: replace the bundle and open the new one
     let script = "while /bin/kill -0 \"$1\" 2>/dev/null; do /bin/sleep 0.2; done; /bin/rm -rf \"$3\" && /usr/bin/ditto \"$2\" \"$3\" && /usr/bin/open \"$3\""
@@ -392,17 +584,46 @@ func installUpdate(from zip: URL) async throws {
     try p.run()
 }
 
-// MARK: - Launch at login (LaunchAgent)
-var launchAgentPath: String { NSHomeDirectory() + "/Library/LaunchAgents/\(launchAgentLabel).plist" }
-func autoStartEnabled() -> Bool { FileManager.default.fileExists(atPath: launchAgentPath) }
+// MARK: - Launch at login (System Settings → General → Login Items → Open at Login)
+/// One-time move from the 1.0.2 identifier: copy the old settings over.
+/// (A new identifier also gives macOS a fresh Menu Bar entry, so its on/off switch works again.)
+func migrateFromLegacyID() {
+    let d = UserDefaults.standard
+    guard !d.bool(forKey: "migratedFromLegacyID") else { return }
+    if let old = d.persistentDomain(forName: legacyBundleID) {
+        for (k, v) in old where d.object(forKey: k) == nil { d.set(v, forKey: k) }
+        d.removePersistentDomain(forName: legacyBundleID)
+    }
+    d.set(true, forKey: "migratedFromLegacyID")
+}
+
+/// Up to 1.0.2 "Launch at Login" was a hidden LaunchAgent file. Remove it and,
+/// if it was on, turn on the standard Open at Login item instead.
+func replaceLegacyLaunchAgent() {
+    var wasOn = false
+    for label in [legacyBundleID] {
+        let path = NSHomeDirectory() + "/Library/LaunchAgents/\(label).plist"
+        if FileManager.default.fileExists(atPath: path) {
+            try? FileManager.default.removeItem(atPath: path)
+            wasOn = true
+        }
+    }
+    if wasOn && installedInApplications() { setAutoStart(true) }
+}
+
+/// Running from a real install location (/Applications or ~/Applications), not a mounted DMG,
+/// a translocated copy, or some other folder
+func installedInApplications() -> Bool {
+    let path = Bundle.main.bundleURL.resolvingSymlinksInPath().path
+    return [ "/Applications/", NSHomeDirectory() + "/Applications/" ].contains { path.hasPrefix($0) }
+}
+/// On = ClaudeCount is in the Open at Login list (the same switch as in System Settings)
+func autoStartEnabled() -> Bool { SMAppService.mainApp.status == .enabled }
 func setAutoStart(_ on: Bool) {
-    if on {
-        let exe = Bundle.main.executablePath ?? CommandLine.arguments[0]
-        let plist: [String: Any] = ["Label": launchAgentLabel, "ProgramArguments": [exe], "RunAtLoad": true]
-        try? FileManager.default.createDirectory(atPath: NSHomeDirectory() + "/Library/LaunchAgents", withIntermediateDirectories: true)
-        (plist as NSDictionary).write(toFile: launchAgentPath, atomically: true)
-    } else {
-        try? FileManager.default.removeItem(atPath: launchAgentPath)
+    do {
+        if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
+    } catch {
+        NSLog("ClaudeCount: Launch at Login \(on ? "on" : "off") failed: \(error)")
     }
 }
 
@@ -503,6 +724,7 @@ final class SegmentRowView: NSView {
 /// A clickable menu row: text on the left, optional text or ✓ on the right, hover highlight.
 final class MenuRowView: NSView {
     let title: String, right: String?, gray: Bool, closes: Bool
+    var emphasis = false   // Claude-orange, semibold (used for "Log in to Claude")
     var checked: Bool? { didSet { needsDisplay = true } }
     let onClick: () -> Void
     var hovering = false { didSet { needsDisplay = true } }
@@ -536,7 +758,8 @@ final class MenuRowView: NSView {
         let font = NSFont.menuFont(ofSize: 13)
         let main: NSColor = hovering ? .selectedMenuItemTextColor : (gray ? softGray : .labelColor)
         let side: NSColor = hovering ? .selectedMenuItemTextColor : softGray
-        let t = NSAttributedString(string: title, attributes: [.font: font, .foregroundColor: main])
+        let t = NSAttributedString(string: title, attributes: [.font: emphasis ? NSFont.systemFont(ofSize: 13, weight: .semibold) : font,
+                                                               .foregroundColor: emphasis && !hovering ? AppDelegate.claudeOrange : main])
         t.draw(at: NSPoint(x: textInset, y: (bounds.height - t.size().height) / 2))
         // submenu arrow: a chevron a little larger than the text glyph, in the shortcut gray
         if right == "›" {
@@ -615,30 +838,6 @@ final class LineView: NSView {
     }
 }
 
-/// Menu-style key equivalent for showing the global shortcut on the right of "Refresh Now"
-func menuKeyEquivalent(_ s: Shortcut) -> (char: String, mods: NSEvent.ModifierFlags)? {
-    var mods: NSEvent.ModifierFlags = []
-    if s.mods & controlKey != 0 { mods.insert(.control) }
-    if s.mods & optionKey != 0 { mods.insert(.option) }
-    if s.mods & shiftKey != 0 { mods.insert(.shift) }
-    if s.mods & cmdKey != 0 { mods.insert(.command) }
-    let fkeys = [kVK_F1, kVK_F2, kVK_F3, kVK_F4, kVK_F5, kVK_F6, kVK_F7, kVK_F8, kVK_F9, kVK_F10,
-                 kVK_F11, kVK_F12, kVK_F13, kVK_F14, kVK_F15, kVK_F16, kVK_F17, kVK_F18, kVK_F19, kVK_F20]
-    if let i = fkeys.firstIndex(of: s.keyCode) {
-        return (String(UnicodeScalar(UInt16(NSF1FunctionKey + i))!), mods)
-    }
-    let special: [Int: Int] = [kVK_LeftArrow: NSLeftArrowFunctionKey, kVK_RightArrow: NSRightArrowFunctionKey,
-                               kVK_UpArrow: NSUpArrowFunctionKey, kVK_DownArrow: NSDownArrowFunctionKey,
-                               kVK_Home: NSHomeFunctionKey, kVK_End: NSEndFunctionKey,
-                               kVK_PageUp: NSPageUpFunctionKey, kVK_PageDown: NSPageDownFunctionKey]
-    if let f = special[s.keyCode] { return (String(UnicodeScalar(UInt16(f))!), mods) }
-    if s.keyCode == kVK_Space { return (" ", mods) }
-    if s.keyCode == kVK_Return { return ("\r", mods) }
-    if s.keyCode == kVK_Tab { return ("\t", mods) }
-    guard let last = s.label.last else { return nil }
-    return (String(last).lowercased(), mods)
-}
-
 // MARK: - Menu bar UI
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // An open menu can't shrink, so changes from a background refresh wait until it closes
@@ -666,6 +865,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationDidFinishLaunching(_ n: Notification) {
+        replaceLegacyLaunchAgent()
         setBoxes([nil, nil], remain: [nil, nil])
         rebuildMenu()
         restartTimer()
@@ -673,7 +873,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         HotKey.action = { [weak self] in self?.update() }
         HotKey.register(HotKey.saved)
         log("hotkey: \(HotKey.saved?.label ?? "none") \(HotKey.active ? "ok" : "fail")")
+        askLaunchAtLoginOnce()
         update()
+        // Check twice so a briefly hidden menu bar (login, wake) doesn't trigger the alert
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+            guard let self, !self.iconOnScreen() else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in self?.warnIfIconHidden() }
+        }
+    }
+
+    /// Is the menu bar icon actually on a screen? (false when macOS keeps it out of the menu bar)
+    func iconOnScreen() -> Bool {
+        guard item.isVisible, let w = item.button?.window, w.isVisible,
+              w.frame.height > 0, w.occlusionState.contains(.visible) else { return false }   // hidden by macOS: zero height, not visible
+        return NSScreen.screens.contains { $0.frame.intersects(w.frame) }
+    }
+
+    /// Icon not in the menu bar: say so once and offer Menu Bar settings.
+    /// "I hid it" is remembered, so someone who hid it on purpose isn't asked again.
+    func warnIfIconHidden() {
+        let key = "iconHiddenOnPurpose"
+        let w = item.button?.window
+        log("icon check: item \(item.isVisible) window \(w?.isVisible ?? false) frame \(w.map { NSStringFromRect($0.frame) } ?? "-")")
+        if iconOnScreen() { UserDefaults.standard.removeObject(forKey: key); return }
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        let answer = alert(L("메뉴바에 ClaudeCount가 안 보여요", "ClaudeCount isn't in the menu bar"), "",
+                           buttons: [L("메뉴 막대 설정 열기", "Open Menu Bar Settings"), L("일부러 숨겼어요", "I Hid It")])
+        if answer == .alertFirstButtonReturn {
+            item.isVisible = true
+            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.ControlCenter-Settings.extension")!)
+        } else {
+            UserDefaults.standard.set(true, forKey: key)
+        }
+    }
+
+    /// First run only: ask whether ClaudeCount should start with the Mac
+    func askLaunchAtLoginOnce() {
+        let key = "askedLaunchAtLogin"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        UserDefaults.standard.set(true, forKey: key)
+        guard !autoStartEnabled() else { return }   // already on: nothing to ask
+        let answer = alert(L("맥을 켤 때 ClaudeCount도 켤까요?", "Open ClaudeCount when your Mac starts?"),
+                           L("켜 두면 맥을 켤 때마다 메뉴바에 사용량이 바로 나와요.\n나중에 메뉴의 「로그인 시 자동 실행」에서 언제든 바꿀 수 있어요.",
+                             "Your usage will be in the menu bar every time you log in.\nYou can change this anytime with Launch at Login in the menu."),
+                           buttons: [L("자동 실행 켜기", "Turn On"), L("나중에", "Not Now")])
+        if answer == .alertFirstButtonReturn { setAutoStart(true) }
+        rebuildMenu()
     }
 
     var recorder: ShortcutRecorder?
@@ -713,9 +958,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         update()
     }
 
+    var updating = false   // one refresh at a time, so two token refreshes never race each other
     @objc func update() {
+        guard !updating else { return }
+        updating = true
         item.button?.alphaValue = 0.4 // dim slightly while refreshing
         Task { @MainActor in
+            defer { updating = false }
             do {
                 last = try await fetchUsage()
                 lastUpdated = Date()
@@ -726,6 +975,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 if case .http(429) = lastError { startBackoff() }
             }
             render()
+            promptLoginIfNeeded()
         }
     }
 
@@ -819,13 +1069,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return " · \(rel) \(L("남음", "left")) (\(f.string(from: d)))"
     }
 
-    func info(_ title: String) -> NSMenuItem {
-        // not clickable, but drawn in the same color as other menu items
-        let m = NSMenuItem(title: title, action: nil, keyEquivalent: ""); m.isEnabled = false
-        m.attributedTitle = NSAttributedString(string: title, attributes: [.font: NSFont.menuFont(ofSize: 0), .foregroundColor: NSColor.labelColor])
-        return m
-    }
-
     var usageViews: [String: UsageRowView] = [:]
     var checkViews: [String: MenuRowView] = [:]
 
@@ -834,6 +1077,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if menuOpen { pendingRebuild = true; return }
         let menu = NSMenu()
         usageViews = [:]; checkViews = [:]
+        if needsLogin {
+            let login = MenuRowView(lastError == .unauthorized ? L("Claude 다시 로그인하기", "Sign In to Claude Again") : L("Claude 로그인하기", "Sign In to Claude"),
+                                    right: "→") { [weak self] in self?.startLogin() }
+            login.emphasis = true
+            menu.addItem(row(login))
+            let note = NSMenuItem()
+            note.view = NoteView(L("Claude Code 로그인이 필요해요. 누르면 터미널에서 설치와 로그인을 도와드려요.",
+                                   "ClaudeCount needs your Claude Code login. Click to install and sign in from Terminal."))
+            menu.addItem(note)
+            menu.addItem(LineItem.make())
+        }
         if let u = last {
             // Show model limits (e.g. Fable) only once used, or when "Always Show" is on, so accounts without access are not confused
             let extras = u.extras.filter { showModelLimits || $0.1.used > 0 }
@@ -865,7 +1119,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(row(MenuRowView(L("Extra 사용량 구매…", "Buy Extra Usage…")) { [weak self] in self?.openBilling() }))
 
         // status lines stay in the same block, under Buy Extra Usage
-        if let e = errorText { menu.addItem(row(InfoRowView("⚠︎ \(e)", color: softGray))) }
+        if let e = errorText, !needsLogin { menu.addItem(row(InfoRowView("⚠︎ \(e)", color: softGray))) }
         if let t = lastUpdated {
             let f = DateFormatter(); f.dateFormat = "HH:mm:ss"
             menu.addItem(row(InfoRowView(L("마지막 갱신 ", "Last updated ") + f.string(from: t), color: softGray)))
@@ -908,23 +1162,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         langItem.view = langRow
         langRow.onClickOverride = { [weak self, weak langRow] in   // click also opens the choices, in case hover doesn't
             guard let self, let langRow else { return }
-            let pop = NSMenu()
-            for (code, name) in [("ko", "한국어"), ("en", "English")] {
-                let li = NSMenuItem(title: name, action: #selector(self.setLanguage(_:)), keyEquivalent: "")
-                li.representedObject = code; li.target = self
-                li.state = (Lang.isKorean == (code == "ko")) ? .on : .off
-                pop.addItem(li)
-            }
-            pop.popUp(positioning: nil, at: NSPoint(x: langRow.bounds.width - 8, y: langRow.bounds.height), in: langRow)
+            self.makeLanguageMenu().popUp(positioning: nil, at: NSPoint(x: langRow.bounds.width - 8, y: langRow.bounds.height), in: langRow)
         }
-        let langMenu = NSMenu()
-        for (code, name) in [("ko", "한국어"), ("en", "English")] {
-            let li = NSMenuItem(title: name, action: #selector(setLanguage(_:)), keyEquivalent: "")
-            li.representedObject = code; li.target = self
-            li.state = (Lang.isKorean == (code == "ko")) ? .on : .off
-            langMenu.addItem(li)
-        }
-        langItem.submenu = langMenu
+        langItem.submenu = makeLanguageMenu()
         menu.addItem(langItem)
         let autoRow = MenuRowView(L("로그인 시 자동 실행", "Launch at Login"), checked: autoStartEnabled(),
                                   closesMenu: false) { [weak self] in self?.toggleAuto() }
@@ -984,11 +1224,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refreshUsageRows()   // update the open menu in place
         render()             // menu bar icon; menu rebuilt on close
     }
+    // ── Claude Code login ──
+    var needsLogin: Bool {
+        switch lastError { case .noCredentials?, .unauthorized?: return true; default: return false }
+    }
+    var loginPromptShown = false
+    var guide: LoginGuide?
+    @objc func startLogin() {
+        openLoginInTerminal()
+        // a small guide window follows along; when the login appears it fetches the numbers and closes
+        guide?.panel.close()
+        guide = LoginGuide(reopenTerminal: { openLoginInTerminal() }) { [weak self] in self?.update() }
+        guide?.onLanguage = { [weak self] in self?.render() }
+        guide?.show()
+    }
+    /// First time we find no login after launch: explain it and offer to start
+    func promptLoginIfNeeded() {
+        guard needsLogin, !loginPromptShown else { return }
+        loginPromptShown = true
+        let answer = alert(L("Claude 로그인이 필요해요", "Sign in to Claude"),
+                           L("Claude Code 로그인으로 사용량을 가져와요.\n「로그인하기」를 누르면 터미널이 열려요.\nClaude Code가 없으면 설치까지 해 드려요.\n브라우저에서 「승인」만 누르면 끝이에요.",
+                             "Works with your Claude Code login.\nClick Sign In and Terminal opens.\nIf Claude Code is missing, it gets installed.\nThen just click Authorize in your browser."),
+                           buttons: [L("로그인하기", "Sign In"), L("나중에", "Later")], wide: true)
+        if answer == .alertFirstButtonReturn { startLogin() }
+    }
+
     // ── Check for updates ──
-    func alert(_ title: String, _ text: String, buttons: [String]) -> NSApplication.ModalResponse {
+    func alert(_ title: String, _ text: String, buttons: [String], wide: Bool = false) -> NSApplication.ModalResponse {
         NSApp.activate(ignoringOtherApps: true)
         let a = NSAlert()
         a.messageText = title; a.informativeText = text
+        if wide {   // Wider alert so each line of `text` stays on one line
+            a.informativeText = ""
+            let para = NSMutableParagraphStyle(); para.lineSpacing = Lang.isKorean ? 2 : 0   // Korean reads better with a touch more leading
+            let body = NSTextField(labelWithAttributedString: NSAttributedString(string: text, attributes: [.font: NSFont.systemFont(ofSize: 13), .paragraphStyle: para]))
+            body.sizeToFit()
+            body.frame.origin.x = 4.5   // line up with the title
+            let box = NSView(frame: NSRect(x: 0, y: 0, width: body.frame.maxX + 10, height: body.frame.height))
+            box.addSubview(body); a.accessoryView = box
+        }
         buttons.forEach { a.addButton(withTitle: $0) }
         return a.runModal()
     }
@@ -1007,10 +1281,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                      "You have \(currentVersion). ClaudeCount will quit briefly and reopen as the new version."),
                                    buttons: [L("지금 업데이트", "Update Now"), L("나중에", "Later")])
                 guard answer == .alertFirstButtonReturn else { return }
+                // Outside /Applications (a DMG, Downloads, a translocated copy) the app can't be swapped in place:
+                // open the download page instead of quitting into nothing
+                guard installedInApplications() else {
+                    NSWorkspace.shared.open(URL(string: "https://github.com/hellocket/ClaudeCount/releases/latest")!)
+                    return
+                }
                 item.button?.alphaValue = 0.4
                 try await installUpdate(from: latest.zip)
                 log("update: installing \(latest.version)")
                 NSApp.terminate(nil)
+            } catch UpdateError.wrongApp {
+                // the download isn't signed like this app: don't install it, send people to the release page
+                item.button?.alphaValue = 1
+                log("update: signature check failed")
+                _ = alert(L("업데이트 파일을 확인할 수 없어요", "Couldn't verify the update"),
+                          L("받은 파일이 ClaudeCount의 서명과 맞지 않아 설치하지 않았어요.\nGitHub 페이지에서 직접 받아 주세요.",
+                            "The download isn't signed like ClaudeCount, so it wasn't installed.\nPlease download it from the GitHub page."),
+                          buttons: [L("다운로드 페이지 열기", "Open Download Page")])
+                NSWorkspace.shared.open(URL(string: "https://github.com/hellocket/ClaudeCount/releases/latest")!)
             } catch {
                 item.button?.alphaValue = 1
                 _ = alert(L("업데이트를 확인하지 못했어요", "Couldn't check for updates"),
@@ -1039,6 +1328,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc func setInterval(_ sender: NSMenuItem) {
         if let mins = sender.representedObject as? Int { pollMinutes = mins; rebuildMenu() }
     }
+    func makeLanguageMenu() -> NSMenu {
+        let m = NSMenu()
+        for (code, name) in [("ko", "한국어"), ("en", "English")] {
+            let li = NSMenuItem(title: name, action: #selector(setLanguage(_:)), keyEquivalent: "")
+            li.representedObject = code; li.target = self
+            li.state = (Lang.isKorean == (code == "ko")) ? .on : .off
+            m.addItem(li)
+        }
+        return m
+    }
     @objc func setLanguage(_ sender: NSMenuItem) {
         UserDefaults.standard.set(sender.representedObject as? String, forKey: "lang")
         render()
@@ -1049,17 +1348,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 }
 
-if ProcessInfo.processInfo.environment["CLAUDECOUNT_UPDATE_TEST"] == "1" {
-    // developer test: install the latest release over this copy without asking, then quit
-    Task {
-        do { let r = try await latestRelease(); print("latest", r.version, "current", currentVersion)
-             if isNewer(r.version, than: currentVersion) { try await installUpdate(from: r.zip); print("installing") } }
-        catch { print("update error", error) }
-        exit(0)
-    }
-    RunLoop.main.run()
-}
-
+migrateFromLegacyID()   // before anything reads settings
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate

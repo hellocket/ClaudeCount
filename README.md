@@ -15,7 +15,7 @@ Count your Claude limits — the 5-hour and weekly usage, right in your Mac menu
 ## ⚠️ Before you start
 
 - **Requires a Claude Code login.** ClaudeCount reads the login that Claude Code saves in your Mac's keychain.
-- **All data stays on your Mac.** The app only talks to Anthropic's servers (to fetch usage and refresh the login). Nothing is sent to analytics, ads, or any third party. It stores: settings, a status log (`~/Library/Logs/ClaudeCount.log`), the last usage numbers (`~/Library/Caches/ClaudeCount`), and the launch-at-login item. Login tokens are never written to any file.
+- **All data stays on your Mac.** The app only talks to Anthropic's servers (to fetch usage and refresh the login), plus GitHub when you click **Check for Updates**. Nothing is sent to analytics, ads, or any third party. It stores: settings, a status log (`~/Library/Logs/ClaudeCount.log`), the last usage numbers (`~/Library/Caches/ClaudeCount`), the sign-in helper script (`~/Library/Application Support/ClaudeCount`), and the launch-at-login item. Login tokens are never written to any file.
 - **It refreshes your login.** When the saved login expires, ClaudeCount refreshes it the same way Claude Code does and saves it back to the keychain. If Claude Code ever gets logged out, run `claude` in Terminal and log in again.
 - **Not an official app.** It uses the usage API that Claude Code uses internally. If Anthropic changes that API, the app may stop working.
 - **Not notarized by Apple.** macOS warns you the first time you open it. Follow step 3 below.
