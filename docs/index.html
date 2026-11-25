@@ -119,6 +119,10 @@ h2 { font-size: clamp(24px, 3.4vw, 32px); font-weight: 700; line-height: 1.25; }
 .dropdown .seg { display: inline-flex; background: #3A3835; border-radius: 7px; padding: 2px; font-size: 12px; }
 .dropdown .seg span { padding: 2px 10px; border-radius: 5px; color: var(--fg-2); }
 .dropdown .seg span.on { background: #5A5753; color: var(--fg); }
+.dropdown .slider { display: inline-flex; align-items: center; width: 120px; height: 14px; position: relative; }
+.dropdown .slider::before { content: ""; position: absolute; left: 0; right: 0; height: 4px; border-radius: 2px; background: #46433E; }
+.dropdown .slider::after { content: ""; position: absolute; left: calc(50% - 7px); width: 14px; height: 14px; border-radius: 50%; background: #D9D6D0; box-shadow: 0 1px 2px rgba(0,0,0,.4); }
+.chip .num.mono { color: var(--fg); }
 .dropdown li kbd { color: var(--fg-3); font-family: var(--font-sans); font-size: 13px; }
 .muted { color: var(--fg-2); }
 
@@ -165,7 +169,7 @@ footer a { color: var(--fg-2); }
 </style>
 
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
-  <symbol id="star" viewBox="0 0 40 40"><g fill="none" stroke="#D97757" stroke-width="5" stroke-linecap="round"><line x1="20" y1="4" x2="20" y2="36"/><line x1="6.14" y1="12" x2="33.86" y2="28"/><line x1="6.14" y1="28" x2="33.86" y2="12"/></g></symbol>
+  <symbol id="star" viewBox="0 0 40 40"><g fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round"><line x1="20" y1="4" x2="20" y2="36"/><line x1="6.14" y1="12" x2="33.86" y2="28"/><line x1="6.14" y1="28" x2="33.86" y2="12"/></g></symbol>
 </svg>
 
 <header class="hero">
@@ -214,11 +218,11 @@ footer a { color: var(--fg-2); }
             <div class="track"><div class="fill" style="width:21%;background:var(--ok)"></div></div>
           </div>
           <div class="row">
-            <p><b>7d</b> 82% · <b>62h05m</b> left <span class="muted">(Thu 18:00)</span></p>
+            <p><b>7d</b> 82% · <b>2d14h05m</b> left <span class="muted">(Thu 18:00)</span></p>
             <div class="track"><div class="fill" style="width:82%;background:var(--warn)"></div></div>
           </div>
           <div class="row">
-            <p><b>Fable</b> 24% · <b>62h05m</b> left <span class="muted">(Thu 18:00)</span></p>
+            <p><b>Fable</b> 24% · <b>2d14h05m</b> left <span class="muted">(Thu 18:00)</span></p>
             <div class="track"><div class="fill" style="width:24%;background:var(--ok)"></div></div>
           </div>
           <div class="row">
@@ -238,6 +242,8 @@ footer a { color: var(--fg-2); }
           <hr>
           <ul>
             <li class="ctl">Show<span class="seg"><span class="on">Used</span><span>Remaining</span></span></li>
+            <li class="ctl">Color<span class="seg"><span class="on">Orange</span><span>Auto</span></span></li>
+            <li class="ctl">Brightness<span class="slider" aria-hidden="true"></span></li>
             <li class="on">Show Fable Limit</li>
             <li class="on">Show Weekly Usage</li>
           </ul>
@@ -269,6 +275,14 @@ footer a { color: var(--fg-2); }
             </div>
           </li>
           <li>
+            <h3>Readable on any wallpaper</h3>
+            <p>Orange numbers hard to see? Choose Auto and they turn monochrome like other menu bar icons. Or make the orange lighter or darker.</p>
+            <div class="chips">
+              <span class="chip"><span class="num">21<svg class="star" aria-hidden="true" style="margin-inline:0.15em"><use href="#star"/></svg>33</span>Orange</span>
+              <span class="chip"><span class="num mono">21<svg class="star" aria-hidden="true" style="margin-inline:0.15em"><use href="#star"/></svg>33</span>Auto</span>
+            </div>
+          </li>
+          <li>
             <h3>Fable and Extra credits too</h3>
             <p>Model limits and extra usage get their own rows. Need credits? One click opens the purchase page in the Claude app.</p>
           </li>
@@ -296,7 +310,7 @@ footer a { color: var(--fg-2); }
         </div></li>
         <li><div>
           <h3>Log in from Terminal</h3>
-          <p>Your browser opens. Sign in, approve, done.</p>
+          <p>Your browser opens. Sign in, approve, done. Or just open ClaudeCount: it walks you through this step by step.</p>
           <div class="code"><code id="cmd-login">claude</code><button type="button" data-copy="cmd-login">Copy</button></div>
         </div></li>
         <li><div>

@@ -119,6 +119,10 @@ h2 { font-size: clamp(24px, 3.4vw, 32px); font-weight: 700; line-height: 1.25; }
 .dropdown .seg { display: inline-flex; background: #3A3835; border-radius: 7px; padding: 2px; font-size: 12px; }
 .dropdown .seg span { padding: 2px 10px; border-radius: 5px; color: var(--fg-2); }
 .dropdown .seg span.on { background: #5A5753; color: var(--fg); }
+.dropdown .slider { display: inline-flex; align-items: center; width: 120px; height: 14px; position: relative; }
+.dropdown .slider::before { content: ""; position: absolute; left: 0; right: 0; height: 4px; border-radius: 2px; background: #46433E; }
+.dropdown .slider::after { content: ""; position: absolute; left: calc(50% - 7px); width: 14px; height: 14px; border-radius: 50%; background: #D9D6D0; box-shadow: 0 1px 2px rgba(0,0,0,.4); }
+.chip .num.mono { color: var(--fg); }
 .dropdown li kbd { color: var(--fg-3); font-family: var(--font-sans); font-size: 13px; }
 .muted { color: var(--fg-2); }
 
@@ -165,7 +169,7 @@ footer a { color: var(--fg-2); }
 </style>
 
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
-  <symbol id="star" viewBox="0 0 40 40"><g fill="none" stroke="#D97757" stroke-width="5" stroke-linecap="round"><line x1="20" y1="4" x2="20" y2="36"/><line x1="6.14" y1="12" x2="33.86" y2="28"/><line x1="6.14" y1="28" x2="33.86" y2="12"/></g></symbol>
+  <symbol id="star" viewBox="0 0 40 40"><g fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round"><line x1="20" y1="4" x2="20" y2="36"/><line x1="6.14" y1="12" x2="33.86" y2="28"/><line x1="6.14" y1="28" x2="33.86" y2="12"/></g></symbol>
 </svg>
 
 <header class="hero">
@@ -214,11 +218,11 @@ footer a { color: var(--fg-2); }
             <div class="track"><div class="fill" style="width:21%;background:var(--ok)"></div></div>
           </div>
           <div class="row">
-            <p><b>7d</b> 82% · <b>62h05m</b> 남음 <span class="muted">(목 18:00)</span></p>
+            <p><b>7d</b> 82% · <b>2d14h05m</b> 남음 <span class="muted">(목 18:00)</span></p>
             <div class="track"><div class="fill" style="width:82%;background:var(--warn)"></div></div>
           </div>
           <div class="row">
-            <p><b>Fable</b> 24% · <b>62h05m</b> 남음 <span class="muted">(목 18:00)</span></p>
+            <p><b>Fable</b> 24% · <b>2d14h05m</b> 남음 <span class="muted">(목 18:00)</span></p>
             <div class="track"><div class="fill" style="width:24%;background:var(--ok)"></div></div>
           </div>
           <div class="row">
@@ -238,6 +242,8 @@ footer a { color: var(--fg-2); }
           <hr>
           <ul>
             <li class="ctl">표시<span class="seg"><span class="on">사용량</span><span>잔여량</span></span></li>
+            <li class="ctl">색상<span class="seg"><span class="on">주황</span><span>자동</span></span></li>
+            <li class="ctl">주황 밝기<span class="slider" aria-hidden="true"></span></li>
             <li class="on">Fable 한도 보기</li>
             <li class="on">주간 사용량 보기</li>
           </ul>
@@ -269,6 +275,14 @@ footer a { color: var(--fg-2); }
             </div>
           </li>
           <li>
+            <h3>어떤 배경화면에서도 잘 보이게</h3>
+            <p>주황 숫자가 배경에 묻히면 「자동」을 고르세요. 다른 메뉴바 아이콘처럼 흑백으로 바뀌어요. 주황을 더 밝게, 더 어둡게도 조절할 수 있어요.</p>
+            <div class="chips">
+              <span class="chip"><span class="num">21<svg class="star" aria-hidden="true" style="margin-inline:0.15em"><use href="#star"/></svg>33</span>주황</span>
+              <span class="chip"><span class="num mono">21<svg class="star" aria-hidden="true" style="margin-inline:0.15em"><use href="#star"/></svg>33</span>자동</span>
+            </div>
+          </li>
+          <li>
             <h3>Fable · Extra 크레딧까지</h3>
             <p>모델별 주간 한도와 추가 사용량도 한 줄씩. 크레딧이 필요하면 메뉴에서 바로 Claude 앱의 구매 화면으로.</p>
           </li>
@@ -296,7 +310,7 @@ footer a { color: var(--fg-2); }
         </div></li>
         <li><div>
           <h3>터미널에서 로그인</h3>
-          <p>실행하면 브라우저가 열려요. 로그인하고 승인하면 끝.</p>
+          <p>실행하면 브라우저가 열려요. 로그인하고 승인하면 끝. 아니면 ClaudeCount를 그냥 열어도 돼요. 이 단계를 하나씩 안내해 드려요.</p>
           <div class="code"><code id="cmd-login">claude</code><button type="button" data-copy="cmd-login">복사</button></div>
         </div></li>
         <li><div>
