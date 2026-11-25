@@ -112,6 +112,8 @@ brew install --cask hellocket/tap/claudecount
 | Refresh Now | Refreshes right away. Your shortcut is shown on the right |
 | Change Shortcut… | Press any key combination to set a new shortcut |
 | Show: Used / Remaining | A toggle: show how much you've used, or how much is left |
+| Color: Orange / Auto | The menu bar number color. If an orange-ish wallpaper makes the numbers hard to see, choose **Auto**: they turn monochrome like other menu bar icons and adapt to the menu bar background |
+| Brightness | A slider for the orange: darker to the left, lighter to the right, default in the middle. Off when Color is Auto |
 | Show (model) Limit | Appears only if your account has model-specific limits such as Fable. Shows them even at 0% |
 | Show Weekly Usage | On: `21 ✻ 33`. Off: only the 5-hour number, `✻ 21` |
 | Language › | Switch between English and 한국어 |

@@ -347,41 +347,83 @@ func fetchUsage() async throws -> Usage {
 }
 
 // MARK: - Claude Code login helper
+/// The Terminal script writes where it is up to here, so the guide window can follow along:
+/// installing · install-failed · signing-in · login-failed · done
+let loginSupportDir = NSHomeDirectory() + "/Library/Application Support/ClaudeCount"
+let loginStatusPath = loginSupportDir + "/login-status"
+
+func readLoginStatus() -> String {
+    ((try? String(contentsOfFile: loginStatusPath, encoding: .utf8)) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
 /// Writes a small Terminal script that installs Claude Code if it is missing, then runs `claude auth login`.
+/// Written for people who have never used Terminal: big step headings, nothing to type except an optional paste.
 func openLoginInTerminal() {
     let ko = Lang.isKorean
     let t = { (k: String, e: String) in ko ? k : e }
+    try? FileManager.default.createDirectory(atPath: loginSupportDir, withIntermediateDirectories: true)
+    try? "starting".write(toFile: loginStatusPath, atomically: true, encoding: .utf8)
     let script = """
     #!/bin/zsh
     export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+    STATUS="$HOME/Library/Application Support/ClaudeCount/login-status"
+    B=$'\\e[1m'; O=$'\\e[38;5;173m'; G=$'\\e[32m'; R=$'\\e[31m'; D=$'\\e[2m'; N=$'\\e[0m'
+    setstatus() { print -r -- "$1" > "$STATUS"; }
+    bye() {
+      echo ""
+      echo "${D}\(t("이 창은 이제 닫아도 돼요. (빨간 ● 버튼 또는 ⌘W)", "You can close this window now (red ● button or ⌘W)."))${N}"
+      exit $1
+    }
     clear
-    echo "\(t("ClaudeCount: Claude 로그인을 도와드릴게요.", "ClaudeCount: let's sign in to Claude."))"
+    echo ""
+    echo "  ${O}${B}✻ ClaudeCount — \(t("Claude 로그인 도우미", "Claude sign-in helper"))${N}"
+    echo ""
+    echo "  \(t("이 검은 창은 「터미널」이에요. 아무것도 입력하지 않아도 돼요.", "This window is Terminal. You don't need to type anything."))"
+    echo "  \(t("진행되는 동안 이 창을 닫지 말고 그대로 두세요.", "Please leave it open until it's done."))"
     echo ""
     if ! command -v claude >/dev/null 2>&1; then
-      echo "\(t("1/2  Claude Code를 설치하고 있어요… (1분 정도 걸려요)", "1/2  Installing Claude Code… (about a minute)"))"
+      setstatus installing
+      echo "  ${B}\(t("[1/2] Claude Code 설치 중… (1~2분 걸려요. 글자가 멈춰 있어도 정상이에요)", "[1/2] Installing Claude Code… (1–2 minutes; it's fine if nothing moves for a while)"))${N}"
+      echo ""
       curl -fsSL https://claude.ai/install.sh | bash
       export PATH="$HOME/.local/bin:$PATH"
       if ! command -v claude >/dev/null 2>&1; then
+        setstatus install-failed
         echo ""
-        echo "\(t("설치에 실패했어요. 인터넷 연결을 확인하고 ClaudeCount 메뉴에서 다시 시도해 주세요.", "Install failed. Check your internet connection and try again from the ClaudeCount menu."))"
-        read -k1 "?\(t("아무 키나 누르면 닫혀요.", "Press any key to close."))"; exit 1
+        echo "  ${R}${B}\(t("설치하지 못했어요.", "Install failed."))${N}"
+        echo "  \(t("인터넷 연결을 확인한 뒤, ClaudeCount 안내 창의 「터미널 다시 열기」를 눌러 주세요.", "Check your internet connection, then click Reopen Terminal in the ClaudeCount guide."))"
+        bye 1
       fi
+      echo ""
+      echo "  ${G}✓ \(t("설치 완료", "Installed"))${N}"
+      echo ""
     fi
-    echo "\(t("2/2  브라우저가 열리면 Claude 계정으로 로그인하고 「승인(Authorize)」을 눌러 주세요.", "2/2  When your browser opens, sign in to Claude and click Authorize."))"
+    setstatus signing-in
+    echo "  ${B}\(t("[2/2] 브라우저에서 로그인", "[2/2] Sign in in your browser"))${N}"
+    echo ""
+    echo "  \(t("곧 브라우저에 Claude 로그인 화면이 열려요.", "Your browser will open the Claude sign-in page."))"
+    echo "   ① \(t("데스크톱 앱에서 쓰는 Claude 계정으로 로그인해요.", "Sign in with the Claude account you use in the desktop app."))"
+    echo "   ② \(t("「Authorize」(승인) 버튼을 눌러요.", "Click the Authorize button."))"
+    echo "   ③ \(t("보통은 여기서 끝이에요. 이 창에 ✓가 나타나요.", "That's usually it — a ✓ appears in this window."))"
+    echo ""
+    echo "  ${D}\(t("브라우저에 긴 코드가 보이면: 「Copy Code」 누르기 → 이 창을 한 번 클릭 → ⌘V → Enter", "If the browser shows a long code: click Copy Code → click this window once → ⌘V → Return"))${N}"
+    echo "  ${D}\(t("브라우저가 안 열리면: 아래에 나오는 https:// 주소를 ⌘를 누른 채 클릭하세요.", "If no browser opens: hold ⌘ and click the https:// link below."))${N}"
     echo ""
     if claude auth login --claudeai; then
+      setstatus done
       echo ""
-      echo "\(t("✓ 로그인 완료! 이 창은 닫아도 돼요. ClaudeCount가 곧 숫자를 보여 줄 거예요.", "✓ Signed in! You can close this window. ClaudeCount will show your numbers shortly."))"
+      echo "  ${G}${B}✓ \(t("로그인 완료! 메뉴바에 곧 숫자가 나타나요.", "Signed in! Your numbers will appear in the menu bar shortly."))${N}"
+      bye 0
     else
+      setstatus login-failed
       echo ""
-      echo "\(t("로그인하지 못했어요. Claude Code를 쓸 수 있는 요금제(Pro, Max 등)인지 확인해 주세요.", "Sign-in didn't finish. Make sure your plan includes Claude Code (Pro, Max, and more)."))"
+      echo "  ${R}${B}\(t("로그인하지 못했어요.", "Sign-in didn't finish."))${N}"
+      echo "  \(t("가장 흔한 이유: 무료(Free) 요금제예요. Claude Code는 Pro·Max·Team·Enterprise 요금제에서만 쓸 수 있어요.", "Most common reason: a Free plan. Claude Code needs a Pro, Max, Team, or Enterprise plan."))"
+      echo "  \(t("요금제가 맞다면 ClaudeCount 안내 창의 「터미널 다시 열기」로 다시 해 보세요.", "If your plan is fine, click Reopen Terminal in the ClaudeCount guide to try again."))"
+      bye 1
     fi
-    echo ""
-    read -k1 "?\(t("아무 키나 누르면 닫혀요.", "Press any key to close."))"
     """
-    let dir = URL(fileURLWithPath: NSHomeDirectory() + "/Library/Application Support/ClaudeCount")
-    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-    let file = dir.appendingPathComponent("Log in to Claude.command")
+    let file = URL(fileURLWithPath: loginSupportDir).appendingPathComponent("Log in to Claude.command")
     try? script.write(to: file, atomically: true, encoding: .utf8)
     try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
     let terminal = URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app")
@@ -404,10 +446,16 @@ final class LoginGuide: NSObject, NSWindowDelegate {
     let onDone: () -> Void
     let reopen: () -> Void
     var onLanguage: () -> Void = {}
+    /// The token when the guide opened: a sign-in counts once a token appears or changes
+    /// (so it also works when someone signs in again, or in the test mode)
+    let startToken: String?
+    var finished = false
+    var tokenSeenAt: Date?
 
     init(reopenTerminal: @escaping () -> Void, onDone: @escaping () -> Void) {
         self.onDone = onDone; self.reopen = reopenTerminal
-        panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 440, height: 300), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        startToken = readCredentials()?.accessToken
+        panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 460, height: 320), styleMask: [.titled, .closable], backing: .buffered, defer: false)
         super.init()
         build()
         refresh()
@@ -421,16 +469,17 @@ final class LoginGuide: NSObject, NSWindowDelegate {
         panel.level = .floating
         panel.delegate = self
 
-        let head = NSTextField(wrappingLabelWithString: L("터미널 창이 열렸어요. 아래 순서대로 진행돼요.\n이 창은 진행 상황에 맞춰 알아서 바뀌어요.",
-                                                         "A Terminal window opened. Here's what happens next —\nthis window updates as you go."))
+        let head = NSTextField(wrappingLabelWithString: L("검은 터미널 창이 열렸어요. 아무것도 입력하지 않아도 돼요.\n이 창이 진행 상황을 따라가며 알려 드려요.",
+                                                         "A Terminal window opened. You don't need to type anything —\nthis window follows along and tells you what to do."))
         head.font = .systemFont(ofSize: 13)
         let steps: [(String, String)] = [
             (L("Claude Code 설치", "Install Claude Code"),
-             L("없으면 터미널이 자동으로 설치해요. 1분 정도 기다려 주세요.", "Terminal installs it if it's missing. Takes about a minute.")),
-            (L("브라우저에서 로그인하고 「승인」 누르기", "Sign in in your browser and click Authorize"),
-             L("브라우저가 열리면 로그인하고 「Authorize(승인)」를 눌러요.\n코드가 보이면 복사해서 터미널에 붙여 넣고 Enter를 눌러요.",
-               "When your browser opens, sign in to Claude and click Authorize.\nIf it shows a code, copy it into Terminal and press Return.")),
-            (L("완료", "Done"), L("숫자가 메뉴바에 나타나요.", "Your numbers appear in the menu bar.")),
+             L("없으면 터미널이 알아서 설치해요. 1~2분 걸리고, 글자가 멈춰 있어도 정상이에요.\n터미널 창은 닫지 말고 그대로 두세요.",
+               "Terminal installs it if it's missing. Takes 1–2 minutes; it's fine if nothing moves.\nLeave the Terminal window open.")),
+            (L("브라우저에서 로그인하고 「Authorize」 누르기", "Sign in in your browser and click Authorize"),
+             L("데스크톱 앱에서 쓰는 Claude 계정으로 로그인한 뒤 「Authorize」(승인)를 눌러요.\n긴 코드가 보이면: 「Copy Code」 → 터미널 창 클릭 → ⌘V → Enter",
+               "Sign in with the Claude account you use in the desktop app, then click Authorize.\nIf you see a long code: Copy Code → click the Terminal window → ⌘V → Return")),
+            (L("완료", "Done"), L("숫자가 메뉴바에 나타나요. 터미널 창은 닫아도 돼요.", "Your numbers appear in the menu bar. You can close Terminal.")),
         ]
         let stack = NSStackView()
         stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 12
@@ -445,24 +494,23 @@ final class LoginGuide: NSObject, NSWindowDelegate {
             icon.alignment = .center; icon.widthAnchor.constraint(equalToConstant: 20).isActive = true
             let title = NSTextField(labelWithString: t); title.font = .systemFont(ofSize: 13, weight: .semibold)
             let detail = NSTextField(wrappingLabelWithString: d); detail.font = .systemFont(ofSize: 11.5); detail.textColor = .secondaryLabelColor
-            detail.preferredMaxLayoutWidth = 360
+            detail.preferredMaxLayoutWidth = 390
             let texts = NSStackView(views: [title, detail]); texts.orientation = .vertical; texts.alignment = .leading; texts.spacing = 2
             let rowStack = NSStackView(views: [icon, texts]); rowStack.alignment = .top; rowStack.spacing = 8
             stack.addArrangedSubview(rowStack)
             rows.append((icon, title, detail))
         }
-        footer.font = .systemFont(ofSize: 11); footer.textColor = .secondaryLabelColor
-        footer.stringValue = L("Claude Code를 쓸 수 있는 요금제(Pro, Max 등)가 필요해요.", "Requires a Claude plan that includes Claude Code (Pro, Max, and more).")
+        footer.font = .systemFont(ofSize: 11)
+        footer.preferredMaxLayoutWidth = 300
         again = NSButton(title: L("터미널 다시 열기", "Reopen Terminal"), target: self, action: #selector(reopenTapped))
         again.bezelStyle = .rounded
-        footer.maximumNumberOfLines = 1; footer.cell?.wraps = false
         head.preferredMaxLayoutWidth = 1000
         let gap = NSView(); gap.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let buttons = NSStackView(views: [footer, gap, again]); buttons.alignment = .centerY; buttons.spacing = 10
         stack.addArrangedSubview(buttons)
         // Rows span the full width so the right edge lines up with the left (20pt each side)
         for row in [top, buttons] { row.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true }
-        stack.widthAnchor.constraint(greaterThanOrEqualToConstant: 400).isActive = true
+        stack.widthAnchor.constraint(greaterThanOrEqualToConstant: 420).isActive = true
         let content = NSView()
         stack.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(stack)
@@ -491,28 +539,64 @@ final class LoginGuide: NSObject, NSWindowDelegate {
         }
         NSApp.activate(ignoringOtherApps: true)
         panel.orderFrontRegardless()
-        timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.refresh() }
+        timer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in self?.refresh() }
     }
 
     @objc func reopenTapped() { reopen() }
+    @objc func okTapped() { panel.close() }
 
     func refresh() {
-        let loggedIn = readCredentials() != nil
-        let current: Step = loggedIn ? .done : (claudeInstalled() ? .browser : .install)
+        let token = readCredentials()?.accessToken
+        let status = readLoginStatus()
+        // Finished only once Terminal says it's done too (the token can land a moment before
+        // `claude auth login` exits). If Terminal was closed mid-way, a new token alone counts after 10s.
+        let newToken = token != nil && token != startToken
+        if newToken, tokenSeenAt == nil { tokenSeenAt = Date() }
+        let terminalBusy = ["starting", "installing", "signing-in"].contains(status)
+        let loggedIn = token != nil && (status == "done"
+            || (newToken && (!terminalBusy || Date().timeIntervalSince(tokenSeenAt!) > 10)))
+        let failed = !loggedIn && (status == "install-failed" || status == "login-failed")
+        let current: Step = loggedIn ? .done
+            : status == "install-failed" ? .install
+            : (claudeInstalled() || status == "signing-in") ? .browser : .install
         for (i, r) in rows.enumerated() {
-            let finished = i < current.rawValue || (current == .done && i == Step.done.rawValue)
+            let done = i < current.rawValue || (current == .done && i == Step.done.rawValue)
             let active = i == current.rawValue && current != .done
-            r.icon.stringValue = finished ? "✓" : (active ? "●" : "○")
-            r.icon.textColor = finished ? .systemGreen : (active ? AppDelegate.claudeOrange : .tertiaryLabelColor)
-            r.title.textColor = (finished || active) ? .labelColor : .tertiaryLabelColor
+            r.icon.stringValue = done ? "✓" : (active ? (failed ? "!" : "●") : "○")
+            r.icon.textColor = done ? .systemGreen : (active ? (failed ? .systemRed : AppDelegate.claudeOrange) : .tertiaryLabelColor)
+            r.title.textColor = (done || active) ? .labelColor : .tertiaryLabelColor
         }
         if loggedIn {
-            timer?.invalidate()
-            footer.stringValue = L("로그인 완료! 터미널 창은 닫아도 돼요.", "Signed in! You can close the Terminal window.")
-            again.isHidden = true
-            onDone()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in self?.panel.close() }
+            footer.textColor = .systemGreen
+            footer.font = .systemFont(ofSize: 12.5, weight: .semibold)
+            footer.stringValue = L("모두 완료됐어요! 이제 사용하시면 돼요.\n터미널 창은 닫아도 돼요.",
+                                   "All done! You're ready to go.\nYou can close the Terminal window.")
+            // stays open until the person clicks OK
+            again.title = L("확인", "OK")
+            again.action = #selector(okTapped)
+            again.keyEquivalent = "\r"
+            again.isHidden = false
+            if !finished {
+                finished = true
+                timer?.invalidate()
+                onDone()
+                NSApp.activate(ignoringOtherApps: true)
+                panel.makeKeyAndOrderFront(nil)
+            }
+        } else if status == "login-failed" {
+            footer.textColor = .systemRed
+            footer.stringValue = L("로그인하지 못했어요. 무료(Free) 요금제는 Claude Code를 쓸 수 없어요. 요금제가 Pro 이상이면 다시 시도해 주세요.",
+                                   "Sign-in didn't finish. Free plans can't use Claude Code. If you're on Pro or higher, try again.")
+        } else if status == "install-failed" {
+            footer.textColor = .systemRed
+            footer.stringValue = L("설치하지 못했어요. 인터넷 연결을 확인하고 다시 시도해 주세요.", "Install failed. Check your internet connection and try again.")
+        } else {
+            footer.textColor = .secondaryLabelColor
+            footer.stringValue = L("Pro·Max·Team·Enterprise 요금제가 필요해요. 무료 요금제는 로그인되지 않아요.",
+                                   "Needs a Pro, Max, Team, or Enterprise plan. Free plans can't sign in.")
         }
+        let fit = panel.contentView!.fittingSize
+        if fit != panel.contentView!.frame.size { panel.setContentSize(fit) }
     }
 
     func windowWillClose(_ n: Notification) { timer?.invalidate() }
@@ -645,7 +729,7 @@ final class UsageRowView: NSView {
         let nameLen = (name as NSString).length
         if nameLen > 0 { attr.addAttribute(.font, value: NSFont.boldSystemFont(ofSize: 13), range: NSRange(location: 0, length: nameLen)) }
         // bold the countdown (e.g. 3h47m); percent and the time in parentheses stay regular
-        if let re = try? NSRegularExpression(pattern: "\\d+h\\d+m") {
+        if let re = try? NSRegularExpression(pattern: "(\\d+d)?\\d+h\\d+m") {
             for m in re.matches(in: text, range: NSRange(location: 0, length: (text as NSString).length)) {
                 attr.addAttribute(.font, value: NSFont.boldSystemFont(ofSize: 13), range: m.range)
             }
@@ -719,6 +803,60 @@ final class SegmentRowView: NSView {
         addSubview(label); addSubview(seg)
     }
     required init?(coder: NSCoder) { fatalError() }
+}
+
+/// A slider whose knob settles on 0 near the middle. The snap happens inside the cell, before the knob
+/// is drawn, so it never flickers between the mouse position and the middle while dragging.
+final class SnapSliderCell: NSSliderCell {
+    static let snapRange = 0.07   // about 8pt of the 110pt slider
+    override var doubleValue: Double {
+        get { super.doubleValue }
+        set { super.doubleValue = abs(newValue) < SnapSliderCell.snapRange ? 0 : newValue }
+    }
+    override var floatValue: Float {
+        get { super.floatValue }
+        set { doubleValue = Double(newValue) }
+    }
+    override var objectValue: Any? {
+        get { super.objectValue }
+        set {
+            if let n = newValue as? NSNumber { doubleValue = n.doubleValue } else { super.objectValue = newValue }
+        }
+    }
+}
+final class SnapSlider: NSSlider {
+    override class var cellClass: AnyClass? { get { SnapSliderCell.self } set {} }
+}
+
+/// "Brightness   ●———○———●": a small slider row; reports values while dragging
+final class SliderRowView: NSView {
+    let slider: NSSlider
+    init(title: String, value: Double, min lo: Double, max hi: Double, target: AnyObject, action: Selector) {
+        let label = NSTextField(labelWithString: title)
+        label.font = .menuFont(ofSize: 13)
+        label.sizeToFit()
+        slider = SnapSlider(value: value, minValue: lo, maxValue: hi, target: target, action: action)
+        slider.controlSize = .small
+        slider.isContinuous = true
+        slider.numberOfTickMarks = 3   // darker · default · lighter
+        slider.allowsTickMarkValuesOnly = false
+        let sliderW: CGFloat = 110
+        // wide enough for the label in any language, so the two never overlap
+        let width = max(rowWidth, menuInset + label.frame.width + 12 + sliderW + menuInset)
+        super.init(frame: NSRect(x: 0, y: 0, width: width, height: rowHeight + 4))
+        autoresizingMask = .width
+        label.frame.origin = NSPoint(x: textInset - 2, y: (bounds.height - label.frame.height) / 2)
+        slider.frame = NSRect(x: bounds.width - menuInset - sliderW, y: (bounds.height - 18) / 2, width: sliderW, height: 18)
+        slider.autoresizingMask = .minXMargin
+        addSubview(label); addSubview(slider)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// Off: the whole row fades and ignores the mouse (a disabled slider alone looks unchanged in a menu)
+    var isOn: Bool = true {
+        didSet { slider.isEnabled = isOn; alphaValue = isOn ? 1 : 0.35 }
+    }
+    override func hitTest(_ point: NSPoint) -> NSView? { isOn ? super.hitTest(point) : nil }
 }
 
 /// A clickable menu row: text on the left, optional text or ✓ on the right, hover highlight.
@@ -974,6 +1112,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 lastError = (error as? FetchError) ?? .parse
                 if case .http(429) = lastError { startBackoff() }
             }
+            if loginTest { last = nil; lastError = .noCredentials }   // test mode: act as if signed out
             render()
             promptLoginIfNeeded()
         }
@@ -987,20 +1126,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         set { UserDefaults.standard.set(newValue, forKey: "showUsed") }
     }
 
-    func render() {
-        item.button?.alphaValue = 1
+    /// Redraw only the menu bar icon (no log line, no menu rebuild)
+    @discardableResult
+    func redrawIcon() -> [Int?] {
         let rem = [remaining(last?.fiveHour), remaining(last?.sevenDay)]
         let shown = showUsed ? rem.map { $0.map { 100 - $0 } } : rem
         setBoxes(shown, remain: rem)
+        return shown
+    }
+
+    func render() {
+        item.button?.alphaValue = 1
+        let shown = redrawIcon()
         log("\(showUsed ? "used" : "left") 5h \(shown[0].map(String.init) ?? "–")  7d \(shown[1].map(String.init) ?? "–")")
         rebuildMenu()
     }
 
-    // Menu bar icon: [5-hour] ✻ [weekly], Claude orange, Monoplex KR Nerd Text Italic
+    // Menu bar icon: [5-hour] ✻ [weekly], Claude orange (or monochrome with Color: Auto), Monoplex KR Nerd Text Italic
     // With "Hide Weekly Usage" on: ✻ [5-hour]
     static let claudeOrange = NSColor(srgbRed: 0xD9 / 255, green: 0x77 / 255, blue: 0x57 / 255, alpha: 1)
     static let iconFont: NSFont = NSFont(name: "MonoplexKRNerd-TextItalic", size: 15.7)
         ?? NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+
+    /// true = "Auto": a monochrome template image that macOS colors to stay readable on any wallpaper
+    var monoIcon: Bool {
+        get { UserDefaults.standard.bool(forKey: "monoIcon") }
+        set { UserDefaults.standard.set(newValue, forKey: "monoIcon") }
+    }
+
+    /// Orange brightness: -0.5 (darker) … 0 (default) … +0.5 (lighter)
+    var orangeBrightness: Double {
+        get { UserDefaults.standard.double(forKey: "orangeBrightness") }
+        set { UserDefaults.standard.set(newValue, forKey: "orangeBrightness") }
+    }
+    var iconOrange: NSColor {
+        let b = CGFloat(orangeBrightness)
+        let base = AppDelegate.claudeOrange
+        return (b >= 0 ? base.blended(withFraction: b, of: .white) : base.blended(withFraction: -b, of: .black)) ?? base
+    }
 
     var hideWeekly: Bool {
         get { UserDefaults.standard.bool(forKey: "hideWeekly") }
@@ -1014,7 +1177,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let num = { (v: Int?) in IconPart.number(v.map(String.init) ?? "–") }
         let parts: [IconPart] = hideWeekly ? [.star, num(values[0])] : [num(values[0]), .star, num(values[1])]
         let star: CGFloat = 4.9, gap: CGFloat = 4, h: CGFloat = 22
-        let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: AppDelegate.claudeOrange]
+        let ink: NSColor = monoIcon ? .black : iconOrange
+        let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: ink]
         func w(_ p: IconPart) -> CGFloat {
             switch p { case .number(let s): return NSAttributedString(string: s, attributes: attrs).size().width
                        case .star: return star }
@@ -1037,13 +1201,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                         path.line(to: NSPoint(x: c.x - cos(a) * star / 2, y: c.y - sin(a) * star / 2))
                     }
                     path.lineWidth = 1.2; path.lineCapStyle = .round
-                    AppDelegate.claudeOrange.setStroke(); path.stroke()
+                    ink.setStroke(); path.stroke()
                 }
                 x += w(p) + gap
             }
             return true
         }
-        image.isTemplate = false
+        image.isTemplate = monoIcon   // Auto: macOS picks black or white to match the menu bar
         item.button?.title = ""
         item.button?.image = image
         let kind = showUsed ? L("사용", "used") : L("남은", "left")
@@ -1059,11 +1223,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         else { try? line.write(toFile: logPath, atomically: true, encoding: .utf8) }
     }
 
-    // e.g. " · 4h01m left (07:30)"; more than a day away: " · 62h05m left (Thu 18:00)"
+    // e.g. " · 4h01m left (07:30)"; 24 hours or more count as days: " · 2d14h05m left (Thu 18:00)"
     func resetText(_ d: Date?) -> String {
-        guard let d else { return "" }
+        guard var d else { return "" }
+        // The server sends times like 08:59:59.83: round to the nearest minute so it reads 09:00
+        d = Date(timeIntervalSince1970: (d.timeIntervalSince1970 / 60).rounded() * 60)
         let s = max(0, Int(d.timeIntervalSinceNow))
-        let rel = String(format: "%dh%02dm", s / 3600, (s % 3600) / 60)
+        let days = s / 86400, hm = String(format: "%dh%02dm", (s % 86400) / 3600, (s % 3600) / 60)
+        let rel = days > 0 ? "\(days)d" + hm : hm
         let f = DateFormatter(); f.locale = Locale(identifier: Lang.isKorean ? "ko_KR" : "en_US")
         f.dateFormat = Calendar.current.isDateInToday(d) ? "HH:mm" : "E HH:mm"
         return " · \(rel) \(L("남음", "left")) (\(f.string(from: d)))"
@@ -1083,8 +1250,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             login.emphasis = true
             menu.addItem(row(login))
             let note = NSMenuItem()
-            note.view = NoteView(L("Claude Code 로그인이 필요해요. 누르면 터미널에서 설치와 로그인을 도와드려요.",
-                                   "ClaudeCount needs your Claude Code login. Click to install and sign in from Terminal."))
+            note.view = NoteView(L("사용량을 보려면 Claude 로그인이 한 번 필요해요. 누르면 하나씩 안내해 드려요. (Pro 이상 요금제)",
+                                   "Sign in to Claude once to see your usage. Click and we'll guide you step by step. (Pro plan or higher)"))
             menu.addItem(note)
             menu.addItem(LineItem.make())
         }
@@ -1144,6 +1311,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(LineItem.make())
         menu.addItem(row(SegmentRowView(title: L("표시", "Show"), segments: [L("사용량", "Used"), L("잔여량", "Remaining")],
                                         selected: showUsed ? 0 : 1, target: self, action: #selector(numbersChanged(_:)))))
+        menu.addItem(row(SegmentRowView(title: L("색상", "Color"), segments: [L("주황", "Orange"), L("자동", "Auto")],
+                                        selected: monoIcon ? 1 : 0, target: self, action: #selector(iconColorChanged(_:)))))
+        let bright = SliderRowView(title: L("주황 밝기", "Brightness"), value: orangeBrightness, min: -0.5, max: 0.5,
+                                   target: self, action: #selector(brightnessChanged(_:)))
+        bright.isOn = !monoIcon
+        brightnessRow = bright
+        menu.addItem(row(bright))
         // only when the account has model limits; the title names them (e.g. "Show Fable Limit")
         if let u = last, !u.extras.isEmpty {
             let names = u.extras.map { $0.0 }.joined(separator: " · ")
@@ -1219,6 +1393,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             NSWorkspace.shared.open(URL(string: "https://claude.ai/settings/usage")!)
         }
     }
+    weak var brightnessRow: SliderRowView?
+    @objc func brightnessChanged(_ sender: NSSlider) {
+        orangeBrightness = sender.doubleValue   // already snapped to 0 near the middle (SnapSliderCell)
+        redrawIcon()
+    }
+    @objc func iconColorChanged(_ sender: NSSegmentedControl) {
+        monoIcon = sender.selectedSegment == 1
+        brightnessRow?.isOn = !monoIcon
+        render()   // menu bar icon now; menu rebuilt on close
+    }
     @objc func numbersChanged(_ sender: NSSegmentedControl) {
         showUsed = sender.selectedSegment == 0
         refreshUsageRows()   // update the open menu in place
@@ -1229,12 +1413,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         switch lastError { case .noCredentials?, .unauthorized?: return true; default: return false }
     }
     var loginPromptShown = false
+    /// Test mode for the sign-in flow without signing out of Claude Code:
+    ///   open /Applications/ClaudeCount.app --args -loginTest YES
+    /// Acts signed out until a new sign-in completes (only for that launch; nothing is saved).
+    var loginTest = UserDefaults.standard.bool(forKey: "loginTest")
     var guide: LoginGuide?
     @objc func startLogin() {
         openLoginInTerminal()
         // a small guide window follows along; when the login appears it fetches the numbers and closes
         guide?.panel.close()
-        guide = LoginGuide(reopenTerminal: { openLoginInTerminal() }) { [weak self] in self?.update() }
+        guide = LoginGuide(reopenTerminal: { openLoginInTerminal() }) { [weak self] in
+            self?.loginTest = false
+            self?.update()
+        }
         guide?.onLanguage = { [weak self] in self?.render() }
         guide?.show()
     }
@@ -1243,8 +1434,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard needsLogin, !loginPromptShown else { return }
         loginPromptShown = true
         let answer = alert(L("Claude 로그인이 필요해요", "Sign in to Claude"),
-                           L("Claude Code 로그인으로 사용량을 가져와요.\n「로그인하기」를 누르면 터미널이 열려요.\nClaude Code가 없으면 설치까지 해 드려요.\n브라우저에서 「승인」만 누르면 끝이에요.",
-                             "Works with your Claude Code login.\nClick Sign In and Terminal opens.\nIf Claude Code is missing, it gets installed.\nThen just click Authorize in your browser."),
+                           L("사용량은 Claude Code 로그인으로 가져와요. 처음 한 번만 하면 돼요.\n\n1. 「로그인하기」를 누르면 검은 터미널 창이 열려요. 아무것도 입력하지 않아도 돼요.\n2. Claude Code가 없으면 알아서 설치해요. (1~2분)\n3. 브라우저가 열리면 Claude 계정으로 로그인하고 「Authorize」를 눌러요.\n\nPro·Max·Team·Enterprise 요금제가 필요해요. 무료 요금제는 Claude Code를 쓸 수 없어요.",
+                             "ClaudeCount reads your usage through your Claude Code sign-in. You only do this once.\n\n1. Click Sign In and a Terminal window opens. You don't need to type anything.\n2. If Claude Code is missing, it's installed for you (1–2 minutes).\n3. When your browser opens, sign in to Claude and click Authorize.\n\nNeeds a Pro, Max, Team, or Enterprise plan. Free plans can't use Claude Code."),
                            buttons: [L("로그인하기", "Sign In"), L("나중에", "Later")], wide: true)
         if answer == .alertFirstButtonReturn { startLogin() }
     }

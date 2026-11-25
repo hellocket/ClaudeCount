@@ -31,8 +31,8 @@ cat > "$APP/Contents/Info.plist" <<'EOF'
   <key>CFBundleIdentifier</key><string>io.github.hellocket.claudecount</string>
   <key>CFBundleExecutable</key><string>ClaudeCount</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>1.0.3</string>
-  <key>CFBundleVersion</key><string>1.0.3</string>
+  <key>CFBundleShortVersionString</key><string>1.0.4</string>
+  <key>CFBundleVersion</key><string>1.0.4</string>
   <key>CFBundleDisplayName</key><string>ClaudeCount</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>LSUIElement</key><true/>
